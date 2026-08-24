@@ -1,0 +1,14 @@
+{
+  "routerMap": [
+    {
+      "name": "deviceDetail",
+      "pageSourceFile": "src/main/ets/pages/DeviceDetailPage.ets",
+      "buildFunction": "DeviceDetailBuilder"
+    },
+    {
+      "name": "aboutDevice",
+      "pageSourceFile": "src/main/ets/pages/AboutDevicePage.ets",
+      "buildFunction": "AboutDeviceBuilder"
+    }
+  ]
+}
