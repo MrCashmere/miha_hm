@@ -1,4 +1,4 @@
-/*
+﻿/*
  * 鸿米家（miha）— HarmonyOS NEXT native Xiaomi Home / MIoT control client.
  *
  * Copyright (C) 2026 鸿米家（miha）项目开发者
@@ -85,12 +85,12 @@ export class LanDeviceTransport implements SelectableDeviceTransport {
     if (resultList instanceof Array) {
       for (let i = 0; i < resultList.length; i++) {
         const raw = resultList[i] as Record<string, Object>;
-        byKey.set(`${String(raw['siid'])}.${String(raw['piid'])}`, raw['value']);
+        byKey.set(`${String(raw['did'])}.${String(raw['siid'])}.${String(raw['piid'])}`, raw['value']);
       }
     }
     const mapped: DevicePropertyResult[] = [];
     for (let i = 0; i < params.length; i++) {
-      const key = `${params[i].siid}.${params[i].piid}`;
+      const key = `${params[i].did}.${params[i].siid}.${params[i].piid}`;
       mapped.push({
         did: params[i].did,
         siid: params[i].siid,

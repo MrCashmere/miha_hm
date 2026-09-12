@@ -21,14 +21,16 @@
 
 import { common } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { sheetBlurStyle } from '../utils/SystemMaterial';
+import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
-import { XiaomiDevice, XiaomiHome } from '../models/XiaomiHomeModels';
+import { XiaomiDevice, XiaomiHome, XiaomiRoom } from '../models/XiaomiHomeModels';
 import { RoomStore, UserRoom } from '../storage/RoomStore';
+import { RoomOrderStore } from '../storage/RoomOrderStore';
 
 interface RoomDeviceEntry {
   did: string;
@@ -56,6 +58,8 @@ const EMPTY_ROOM: UserRoom = {
 @Component
 struct RoomsPage {
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
   @StorageLink('fontMode') fontMode: string = 'system';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
@@ -90,6 +94,8 @@ struct RoomsPage {
   widthBp: WidthBreakpoint = WidthBreakpoint.WIDTH_SM;
   @State isWideScreen: boolean = false;
   @State rooms: UserRoom[] = [];
+  /** 云端家庭列表（含 roomList），用于把米家已有房间并入本页 */
+  @State homes: XiaomiHome[] = [];
   @State devices: RoomDeviceEntry[] = [];
   @State homeOptions: HomeOption[] = [];
   @State selectedHomeIndex: number = 0;
@@ -107,6 +113,11 @@ struct RoomsPage {
 
   private topOffset(): number {
     return 56 + this.statusBarHeight;
+  }
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
   }
 
   aboutToAppear(): void {
@@ -159,7 +170,7 @@ struct RoomsPage {
   }
 
   refreshPageSilently(): void {
-    this.rooms = RoomStore.loadRooms();
+    this.rebuildRooms();
     this.loadDevices(true);
   }
 
@@ -168,6 +179,7 @@ struct RoomsPage {
       const context = getContext(this) as common.UIAbilityContext;
       const snapshot = await xiaomiDataService.getHomeSnapshot(context, false);
       const homes = JSON.parse(snapshot.homesJson) as XiaomiHome[];
+      this.homes = homes;
       const options: HomeOption[] = [];
       for (let i = 0; i < homes.length; i++) {
         options.push({
@@ -189,9 +201,91 @@ struct RoomsPage {
         this.selectedHomeId = options[currentIndex].id;
         this.selectedHomeName = options[currentIndex].name;
       }
+      this.rebuildRooms();
     } catch (err) {
-      // 家庭列表加载失败时保持空选项，房间仍可创建（家庭字段为空）
+      // 家庭列表加载失败时保持空选项，房间仍可创建（家庭字段为空）；
+      // 但仍要重建一次，让本地房间照常显示。
+      this.rebuildRooms();
     }
+  }
+
+  /**
+   * 合并米家云端已有房间（`home.roomList`）与本应用自建的本地房间。
+   *
+   * 只读 `RoomStore` 的话，用户在米家 App 里建好的房间在本页看不见，
+   * 会出现「米家有房间、这里空着」的割裂感。按 roomId 去重后合并，
+   * 云端房间优先，本地房间补在其后。
+   */
+  private rebuildRooms(): void {
+    const merged: UserRoom[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < this.homes.length; i++) {
+      const home = this.homes[i];
+      const roomList = home.roomList;
+      for (let j = 0; j < roomList.length; j++) {
+        const room = roomList[j] as XiaomiRoom;
+        if (seen.has(room.roomId)) {
+          continue;
+        }
+        seen.add(room.roomId);
+        merged.push({
+          id: room.roomId,
+          floor: '',
+          name: room.name,
+          homeId: home.homeId,
+          homeName: home.name,
+          dids: room.dids
+        });
+      }
+    }
+    const localRooms = RoomStore.loadRooms();
+    for (let i = 0; i < localRooms.length; i++) {
+      const room = localRooms[i];
+      if (seen.has(room.id)) {
+        continue;
+      }
+      seen.add(room.id);
+      merged.push(room);
+    }
+    merged.sort((a: UserRoom, b: UserRoom): number => {
+      return a.homeName.localeCompare(b.homeName) || a.name.localeCompare(b.name);
+    });
+    // 套用用户手动排列过的顺序（有记录的房间排前面，其余保持名称序）
+    this.rooms = RoomOrderStore.apply(merged);
+  }
+
+  /**
+   * 上移/下移一个房间并持久化顺序。
+   *
+   * 用按钮而不是拖拽手势：房间卡本身已经绑了 cardOnClick（打开详情），
+   * 再叠一层拖拽手势容易与之争抢触摸，且拖拽排序在长列表里要处理滚动冲突。
+   * 按钮方案行为确定、可测，也便于无障碍使用。
+   */
+  private moveRoom(roomId: string, delta: number): void {
+    const list = this.rooms.slice();
+    let index = -1;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id === roomId) {
+        index = i;
+        break;
+      }
+    }
+    if (index < 0) {
+      return;
+    }
+    const target = index + delta;
+    if (target < 0 || target >= list.length) {
+      return;
+    }
+    const moved = list[index];
+    list[index] = list[target];
+    list[target] = moved;
+    this.rooms = list;
+    const order: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      order.push(list[i].id);
+    }
+    RoomOrderStore.save(order);
   }
 
   deviceLocation(device: XiaomiDevice): string {
@@ -332,7 +426,7 @@ struct RoomsPage {
       dids: nextDids
     };
     RoomStore.upsertRoom(nextRoom);
-    this.rooms = RoomStore.loadRooms();
+    this.rebuildRooms();
     this.getUIContext().getPromptAction().showToast({ message: `已将「${device.name}」移出房间` });
   }
 
@@ -375,7 +469,7 @@ struct RoomsPage {
         dids: room.dids.concat(added)
       };
       RoomStore.upsertRoom(nextRoom);
-      this.rooms = RoomStore.loadRooms();
+      this.rebuildRooms();
     }
     this.showAddDevicesSheet = false;
     if (added.length > 0) {
@@ -404,7 +498,7 @@ struct RoomsPage {
       dids: []
     };
     RoomStore.upsertRoom(room);
-    this.rooms = RoomStore.loadRooms();
+    this.rebuildRooms();
     this.floorDraft = '';
     this.roomNameDraft = '';
     this.showAddRoomSheet = false;
@@ -450,7 +544,16 @@ struct RoomsPage {
 
   @Builder
   roomCard(room: UserRoom) {
-    Row({ space: 12 }) {
+    MaterialCard({
+      cardRadius: HwRadius.card,
+      cardPadding: HwSpace.lg,
+      cardHoverEffect: HoverEffect.Highlight,
+      cardDirection: FlexDirection.Row,
+      cardSpace: 12,
+      cardOnClick: () => {
+        this.openRoomSheetById(room.id);
+      }
+    }) {
       Column({ space: 4 }) {
         Text(this.latestRoomTitle(room.id))
           .fontFamily(this.appFontFamily(this.latestRoomTitle(room.id)))
@@ -468,26 +571,43 @@ struct RoomsPage {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(16)
-        .fontColor([HwColor.textSecondary])
+      // 排序按钮：房间多时靠它调整展示顺序，顺序独立持久化（RoomOrderStore）
+      if (this.rooms.length > 1) {
+        IconCircleButton({
+          symbol: $r('sys.symbol.chevron_left'),
+          buttonSize: 28,
+          iconSize: 14,
+          tint: HwColor.textSecondary,
+          buttonInteractive: false,
+          onAction: (): void => {
+            this.moveRoom(room.id, -1);
+          }
+        })
+        IconCircleButton({
+          symbol: $r('sys.symbol.chevron_right'),
+          buttonSize: 28,
+          iconSize: 14,
+          tint: HwColor.textSecondary,
+          buttonInteractive: false,
+          onAction: (): void => {
+            this.moveRoom(room.id, 1);
+          }
+        })
+      }
     }
-    .width('100%')
-    .padding(HwSpace.lg)
-    .borderRadius(HwRadius.card)
-    .backgroundColor(HwGlassCardColor.surface)
-    .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-    .border({ width: 1, color: HwGlassCardColor.border })
-    .clip(true)
-    .hoverEffect(HoverEffect.Highlight)
-    .onClick(() => {
-      this.openRoomSheetById(room.id);
-    })
   }
 
   @Builder
   roomDeviceRow(device: RoomDeviceEntry) {
-    Row({ space: 12 }) {
+    MaterialCard({
+      cardDirection: FlexDirection.Row,
+      cardSpace: 12,
+      cardPadding: HwSpace.md,
+      cardRadius: HwRadius.control,
+      cardOnClick: (): void => {
+        this.confirmRemoveDevice(device);
+      }
+    }) {
       Column({ space: 2 }) {
         Text(device.name)
           .fontFamily(this.appFontFamily(device.name))
@@ -517,117 +637,128 @@ struct RoomsPage {
         .fontSize(16)
         .fontColor([HwColor.textSecondary])
     }
-    .width('100%')
-    .padding(HwSpace.md)
-    .borderRadius(HwRadius.control)
-    .backgroundColor(HwColor.surface)
-    .onClick(() => {
-      this.confirmRemoveDevice(device);
-    })
   }
 
   @Builder
   roomDeviceSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text(this.roomTitle(this.selectedRoomData()))
-          .fontFamily(this.appFontFamily(this.roomTitle(this.selectedRoomData())))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: (): void => {
-            this.showRoomSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      if (this.selectedRoomData().id.length > 0) {
-        if (this.loading) {
-          LoadingProgress()
-            .width(64)
-            .height(64)
-            .margin({ top: 24, bottom: 24 })
-        } else if (this.roomDevices(this.selectedRoomData()).length === 0) {
-          Text('该房间暂无设备，点击下方按钮添加')
-            .fontFamily(this.appFontFamily('该房间暂无设备，点击下方按钮添加'))
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text(this.roomTitle(this.selectedRoomData()))
+            .fontFamily(this.appFontFamily(this.roomTitle(this.selectedRoomData())))
             .fontWeight(this.appFontWeight())
-            .fontSize(14)
-            .fontColor(HwColor.textSecondary)
-            .padding({ top: 24, bottom: 24 })
-        } else {
-          Scroll() {
-            Column({ space: 8 }) {
-              ForEach(this.roomDevices(this.selectedRoomData()), (device: RoomDeviceEntry) => {
-                this.roomDeviceRow(device)
-              }, (device: RoomDeviceEntry) => device.did)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: (): void => {
+              this.showRoomSheet = false;
+            }
+          })
+        }
+        .width('100%')
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+
+        if (this.selectedRoomData().id.length > 0) {
+          if (this.loading) {
+            LoadingProgress()
+              .width(64)
+              .height(64)
+              .margin({ top: 24, bottom: 24 })
+          } else if (this.roomDevices(this.selectedRoomData()).length === 0) {
+            Text('该房间暂无设备，点击下方按钮添加')
+              .fontFamily(this.appFontFamily('该房间暂无设备，点击下方按钮添加'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(14)
+              .fontColor(HwColor.textSecondary)
+              .padding({ top: 24, bottom: 24 })
+          } else {
+            Scroll() {
+              Column({ space: 8 }) {
+                ForEach(this.roomDevices(this.selectedRoomData()), (device: RoomDeviceEntry) => {
+                  this.roomDeviceRow(device)
+                }, (device: RoomDeviceEntry) => device.did)
+              }
+              .width('100%')
+              .padding({ left: HwSpace.lg, right: HwSpace.lg })
+              .margin({ top: 12 })
             }
             .width('100%')
-            .padding({ left: HwSpace.lg, right: HwSpace.lg })
-            .margin({ top: 12 })
+            .layoutWeight(1)
+            .scrollBar(BarState.Off)
           }
-          .width('100%')
-          .layoutWeight(1)
-          .scrollBar(BarState.Off)
         }
-      }
 
-      Row({ space: 12 }) {
-        Button('添加到本房间', { type: ButtonType.Capsule, stateEffect: true })
-          .height(44)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.primary)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .layoutWeight(1)
-          .onClick(() => {
-            this.openAddDevicesSheet();
-          })
-          .bindSheet($$this.showAddDevicesSheet, this.addDevicesSheet(), {
-            height: SheetSize.MEDIUM,
-            dragBar: true,
-            showClose: false,
-            systemMaterial: sheetSystemMaterial(),
-            blurStyle: sheetBlurStyle(),
-          })
-        Button('删除本房间', { type: ButtonType.Capsule, stateEffect: true })
-          .height(44)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.danger)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .layoutWeight(1)
-          .onClick(() => {
-            this.confirmDeleteRoom();
-          })
+        Row({ space: 12 }) {
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('添加到本房间', { type: ButtonType.Capsule, stateEffect: false })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HwColor.primary)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.openAddDevicesSheet();
+              })
+          }
+            .layoutWeight(1)
+            .bindSheet($$this.showAddDevicesSheet, this.addDevicesSheet(), {
+              height: SheetSize.MEDIUM,
+              dragBar: true,
+              showClose: false,
+              backgroundColor: Color.Transparent,
+              blurStyle: sheetBlurStyle(),
+              })
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('删除本房间', { type: ButtonType.Capsule, stateEffect: false })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HwColor.danger)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.confirmDeleteRoom();
+              })
+          }
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+        .margin({ top: 6, bottom: 24 })
       }
       .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-      .margin({ top: 6, bottom: 24 })
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
   }
 
   @Builder
   addDeviceRow(device: RoomDeviceEntry) {
-    Row({ space: 12 }) {
+    MaterialCard({
+      cardDirection: FlexDirection.Row,
+      cardSpace: 12,
+      cardPadding: HwSpace.md,
+      cardRadius: HwRadius.control,
+      cardOnClick: (): void => {
+        this.toggleDeviceSelection(device.did);
+      }
+    }) {
       Column({ space: 2 }) {
         Text(device.name)
           .fontFamily(this.appFontFamily(device.name))
@@ -669,220 +800,222 @@ struct RoomsPage {
       .width(22)
       .height(22)
     }
-    .width('100%')
-    .padding(HwSpace.md)
-    .borderRadius(HwRadius.control)
-    .backgroundColor(HwColor.surface)
-    .onClick(() => {
-      this.toggleDeviceSelection(device.did);
-    })
   }
 
   @Builder
   addDevicesSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text(`添加到「${this.selectedRoomData().name}」`)
-          .fontFamily(this.appFontFamily(`添加到「${this.selectedRoomData().name}」`))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: (): void => {
-            this.showAddDevicesSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      Text('选择要添加到该房间的设备')
-        .fontFamily(this.appFontFamily('选择要添加到该房间的设备'))
-        .fontWeight(this.appFontWeight())
-        .fontSize(12)
-        .fontColor(HwColor.textSecondary)
-        .width('100%')
-        .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 8 })
-
-      if (this.availableDevices().length === 0) {
-        Text('暂无可用设备')
-          .fontFamily(this.appFontFamily('暂无可用设备'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(14)
-          .fontColor(HwColor.textSecondary)
-          .padding({ top: 24, bottom: 24 })
-      } else {
-        Scroll() {
-          Column({ space: 8 }) {
-            ForEach(this.availableDevices(), (device: RoomDeviceEntry) => {
-              this.addDeviceRow(device)
-            }, (device: RoomDeviceEntry) => device.did)
-          }
-          .width('100%')
-          .padding({ left: HwSpace.lg, right: HwSpace.lg })
-          .margin({ top: 12 })
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text(`添加到「${this.selectedRoomData().name}」`)
+            .fontFamily(this.appFontFamily(`添加到「${this.selectedRoomData().name}」`))
+            .fontWeight(this.appFontWeight())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: (): void => {
+              this.showAddDevicesSheet = false;
+            }
+          })
         }
         .width('100%')
-        .layoutWeight(1)
-        .scrollBar(BarState.Off)
-      }
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
 
-      Button(`添加（${this.selectedDids.length}）`, { type: ButtonType.Capsule, buttonStyle: ButtonStyleMode.EMPHASIZED })
-        .width('100%')
-        .height(48)
-        .fontSize(16)
-        .fontColor(Color.White)
-        .backgroundColor(HwColor.primary)
-        .margin({ left: HwSpace.lg, right: HwSpace.lg, top: 12, bottom: 24 })
-        .enabled(this.selectedDids.length > 0)
-        .opacity(this.selectedDids.length > 0 ? 1 : 0.4)
-        .onClick(() => {
-          this.confirmAddDevices();
-        })
+        Text('选择要添加到该房间的设备')
+          .fontFamily(this.appFontFamily('选择要添加到该房间的设备'))
+          .fontWeight(this.appFontWeight())
+          .fontSize(12)
+          .fontColor(HwColor.textSecondary)
+          .width('100%')
+          .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 8 })
+
+        if (this.availableDevices().length === 0) {
+          Text('暂无可用设备')
+            .fontFamily(this.appFontFamily('暂无可用设备'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(14)
+            .fontColor(HwColor.textSecondary)
+            .padding({ top: 24, bottom: 24 })
+        } else {
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.availableDevices(), (device: RoomDeviceEntry) => {
+                this.addDeviceRow(device)
+              }, (device: RoomDeviceEntry) => device.did)
+            }
+            .width('100%')
+            .padding({ left: HwSpace.lg, right: HwSpace.lg })
+            .margin({ top: 12 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
+        }
+
+        Button(`添加（${this.selectedDids.length}）`, { type: ButtonType.Capsule, buttonStyle: ButtonStyleMode.EMPHASIZED })
+          .width('100%')
+          .height(48)
+          .fontSize(16)
+          .fontColor(Color.White)
+          .backgroundColor(HwColor.primary)
+          .margin({ left: HwSpace.lg, right: HwSpace.lg, top: 12, bottom: 24 })
+          .enabled(this.selectedDids.length > 0)
+          .opacity(this.selectedDids.length > 0 ? 1 : 0.4)
+          .onClick(() => {
+            this.confirmAddDevices();
+          })
+      }
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
   }
 
   @Builder
   addRoomSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text('添加房间')
-          .fontFamily(this.appFontFamily('添加房间'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: (): void => {
-            this.showAddRoomSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      Column({ space: 12 }) {
-        Column({ space: 6 }) {
-          Text('所在家庭')
-            .fontFamily(this.appFontFamily('所在家庭'))
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text('添加房间')
+            .fontFamily(this.appFontFamily('添加房间'))
             .fontWeight(this.appFontWeight())
-            .fontSize(14)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
             .fontColor(HwColor.textPrimary)
-          if (this.homeOptions.length > 0) {
-            Select(this.homeOptions.map((option: HomeOption): SelectOption => ({ value: option.name })))
-              .selected(this.selectedHomeIndex)
-              .value(this.selectedHomeName)
-              .font({ size: 15 })
-              .fontColor(HwColor.textPrimary)
-              .selectedOptionFontColor(HwColor.textPrimary)
-              .optionFontColor(HwColor.textPrimary)
-              .width('100%')
-              .onSelect((index: number, value?: string) => {
-                this.selectedHomeIndex = index;
-                this.selectedHomeId = this.homeOptions[index].id;
-                this.selectedHomeName = this.homeOptions[index].name;
-              })
-          } else {
-            Text('暂无家庭可选，请先返回首页加载家庭')
-              .fontFamily(this.appFontFamily('暂无家庭可选，请先返回首页加载家庭'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(13)
-              .fontColor(HwColor.textSecondary)
-          }
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-
-        Column({ space: 6 }) {
-          Text('楼层')
-            .fontFamily(this.appFontFamily('楼层'))
-            .fontWeight(this.appFontWeight())
-            .fontSize(14)
-            .fontColor(HwColor.textPrimary)
-          TextInput({ placeholder: '例如：3、B1', text: this.floorDraft })
-            .width('100%')
-            .height(44)
-            .fontSize(15)
-            .fontColor(HwColor.textPrimary)
-            .placeholderColor(HwColor.textSecondary)
-            .backgroundColor(HwColor.surface)
-            .borderRadius(HwRadius.control)
-            .padding({ left: HwSpace.md, right: HwSpace.md })
-            .onChange((text: string) => {
-              this.floorDraft = text;
-            })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-
-        Column({ space: 6 }) {
-          Text('房间名')
-            .fontFamily(this.appFontFamily('房间名'))
-            .fontWeight(this.appFontWeight())
-            .fontSize(14)
-            .fontColor(HwColor.textPrimary)
-          TextInput({ placeholder: '例如：卧室、客厅', text: this.roomNameDraft })
-            .width('100%')
-            .height(44)
-            .fontSize(15)
-            .fontColor(HwColor.textPrimary)
-            .placeholderColor(HwColor.textSecondary)
-            .backgroundColor(HwColor.surface)
-            .borderRadius(HwRadius.control)
-            .padding({ left: HwSpace.md, right: HwSpace.md })
-            .onChange((text: string) => {
-              this.roomNameDraft = text;
-            })
-        }
-        .alignItems(HorizontalAlign.Start)
-        .width('100%')
-      }
-      .width('100%')
-      .padding({ left: HwSpace.lg, right: HwSpace.lg, top: 12 })
-
-      Row() {
-        Button('确认创建', { type: ButtonType.Capsule, stateEffect: true })
-          .width(220)
-          .height(44)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.primary)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .enabled(this.floorDraft.trim().length > 0 && this.roomNameDraft.trim().length > 0)
-          .opacity(this.floorDraft.trim().length > 0 && this.roomNameDraft.trim().length > 0 ? 1 : 0.4)
-          .onClick(() => {
-            this.createRoom();
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: (): void => {
+              this.showAddRoomSheet = false;
+            }
           })
+        }
+        .width('100%')
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+
+        Column({ space: 12 }) {
+          Column({ space: 6 }) {
+            Text('所在家庭')
+              .fontFamily(this.appFontFamily('所在家庭'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(14)
+              .fontColor(HwColor.textPrimary)
+            if (this.homeOptions.length > 0) {
+              Select(this.homeOptions.map((option: HomeOption): SelectOption => ({ value: option.name })))
+                .selected(this.selectedHomeIndex)
+                .value(this.selectedHomeName)
+                .font({ size: 15 })
+                .fontColor(HwColor.textPrimary)
+                .selectedOptionFontColor(HwColor.textPrimary)
+                .optionFontColor(HwColor.textPrimary)
+                .width('100%')
+                .onSelect((index: number, value?: string) => {
+                  this.selectedHomeIndex = index;
+                  this.selectedHomeId = this.homeOptions[index].id;
+                  this.selectedHomeName = this.homeOptions[index].name;
+                })
+            } else {
+              Text('暂无家庭可选，请先返回首页加载家庭')
+                .fontFamily(this.appFontFamily('暂无家庭可选，请先返回首页加载家庭'))
+                .fontWeight(this.appFontWeight())
+                .fontSize(13)
+                .fontColor(HwColor.textSecondary)
+            }
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+
+          Column({ space: 6 }) {
+            Text('楼层')
+              .fontFamily(this.appFontFamily('楼层'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(14)
+              .fontColor(HwColor.textPrimary)
+            TextInput({ placeholder: '例如：3、B1', text: this.floorDraft })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontColor(HwColor.textPrimary)
+              .placeholderColor(HwColor.textSecondary)
+              .backgroundColor(HwColor.surface)
+              .borderRadius(HwRadius.control)
+              .padding({ left: HwSpace.md, right: HwSpace.md })
+              .onChange((text: string) => {
+                this.floorDraft = text;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+
+          Column({ space: 6 }) {
+            Text('房间名')
+              .fontFamily(this.appFontFamily('房间名'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(14)
+              .fontColor(HwColor.textPrimary)
+            TextInput({ placeholder: '例如：卧室、客厅', text: this.roomNameDraft })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontColor(HwColor.textPrimary)
+              .placeholderColor(HwColor.textSecondary)
+              .backgroundColor(HwColor.surface)
+              .borderRadius(HwRadius.control)
+              .padding({ left: HwSpace.md, right: HwSpace.md })
+              .onChange((text: string) => {
+                this.roomNameDraft = text;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+        }
+        .width('100%')
+        .padding({ left: HwSpace.lg, right: HwSpace.lg, top: 12 })
+
+        Row() {
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('确认创建', { type: ButtonType.Capsule, stateEffect: false })
+              .width(220)
+              .height(44)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HwColor.primary)
+              .backgroundColor(Color.Transparent)
+              .enabled(this.floorDraft.trim().length > 0 && this.roomNameDraft.trim().length > 0)
+              .opacity(this.floorDraft.trim().length > 0 && this.roomNameDraft.trim().length > 0 ? 1 : 0.4)
+              .onClick(() => {
+                this.createRoom();
+              })
+          }
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 24, bottom: 24 })
       }
       .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .margin({ top: 24, bottom: 24 })
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
   }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Scroll() {
@@ -913,35 +1046,36 @@ struct RoomsPage {
                 this.roomCard(room)
               }, (room: UserRoom) => room.id)
               if (this.rooms.length === 0) {
-                Row({ space: 10 }) {
-                  SymbolGlyph($r('sys.symbol.plus'))
-                    .fontSize(18)
-                    .fontColor([HwColor.textSecondary])
-                  Text('添加房间')
-                    .fontFamily(this.appFontFamily('添加房间'))
-                    .fontWeight(this.appFontWeight())
-                    .fontSize(15)
-                    .fontColor(HwColor.textPrimary)
-                    .layoutWeight(1)
-                  SymbolGlyph($r('sys.symbol.chevron_right'))
-                    .fontSize(16)
-                    .fontColor([HwColor.textSecondary])
+                Column() {
+                  MaterialCard({
+                    cardRadius: HwRadius.card,
+                    cardPadding: HwSpace.lg,
+                    cardDirection: FlexDirection.Row,
+                    cardSpace: 10,
+                    cardOnClick: () => {
+                      this.showAddRoomSheet = true;
+                    }
+                  }) {
+                    SymbolGlyph($r('sys.symbol.plus'))
+                      .fontSize(18)
+                      .fontColor([HwColor.textSecondary])
+                    Text('添加房间')
+                      .fontFamily(this.appFontFamily('添加房间'))
+                      .fontWeight(this.appFontWeight())
+                      .fontSize(15)
+                      .fontColor(HwColor.textPrimary)
+                      .layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(16)
+                      .fontColor([HwColor.textSecondary])
+                  }
                 }
                 .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
-                .onClick(() => {
-                  this.showAddRoomSheet = true;
-                })
                 .bindSheet($$this.showAddRoomSheet, this.addRoomSheet(), {
                   height: SheetSize.MEDIUM,
                   dragBar: true,
                   showClose: false,
-                  systemMaterial: sheetSystemMaterial(),
+                  backgroundColor: Color.Transparent,
                   blurStyle: sheetBlurStyle(),
                 })
               }
@@ -996,7 +1130,7 @@ struct RoomsPage {
             height: SheetSize.MEDIUM,
             dragBar: true,
             showClose: false,
-            systemMaterial: sheetSystemMaterial(),
+            backgroundColor: Color.Transparent,
             blurStyle: sheetBlurStyle(),
           })
         }
@@ -1014,7 +1148,7 @@ struct RoomsPage {
       height: SheetSize.MEDIUM,
       dragBar: true,
       showClose: false,
-      systemMaterial: sheetSystemMaterial(),
+      backgroundColor: Color.Transparent,
       blurStyle: sheetBlurStyle(),
       onDisappear: () => {
         this.refreshPageSilently();

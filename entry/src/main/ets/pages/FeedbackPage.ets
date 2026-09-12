@@ -19,7 +19,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { FeedbackLogService } from '../services/FeedbackLogService';
@@ -29,6 +30,8 @@ import { sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
 @Component
 struct FeedbackPage {
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
   @StorageLink('fontWeightMode') fontWeightMode: string = 'system';
@@ -42,6 +45,11 @@ struct FeedbackPage {
   @State generatedPath: string = '';
   @State generating: boolean = false;
   @State showTutorialSheet: boolean = false;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('反馈页');
@@ -250,6 +258,8 @@ struct FeedbackPage {
 
   build() {
     Stack() {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Row() {

@@ -20,12 +20,11 @@
  */
 
 import { ActionArgumentDescriptor } from './CapabilityRenderer';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier } from '../utils/SystemMaterial';
+import { HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { MaterialCard } from './MaterialCard';
 
 @Component
 export struct ActionArgumentControl {
-  @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   @StorageLink('fontMode') fontMode: string = 'system';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
@@ -49,6 +48,17 @@ export struct ActionArgumentControl {
   }
   @StorageLink('fontWeightMode') fontWeightMode: string = 'system';
   @StorageLink('fontWeightValue') fontWeightValue: number = 400;
+
+  /**
+   * 主题色依赖。HwColor 是模块级对象，改属性不会触发刷新；
+   * 不读 accentColor 的话，开关会一直停在 SDK 默认的强调色（蓝）上。
+   */
+  @StorageProp('accentColor') accentColor: string = '';
+
+  /** 当前主题色 */
+  private accent(): string {
+    return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
+  }
 
   private appFontWeight(): number {
     return this.fontWeightMode === 'custom' ? this.fontWeightValue : 400;
@@ -91,7 +101,11 @@ export struct ActionArgumentControl {
   }
 
   build() {
-    Column({ space: 6 }) {
+    MaterialCard({
+      cardSpace: 6,
+      cardRadius: HwRadius.control,
+      cardPadding: HwSpace.md
+    }) {
       Text(this.argument.label)
         .fontFamily(this.appFontFamily(this.argument.label))
         .fontWeight(this.appFontWeight())
@@ -100,6 +114,8 @@ export struct ActionArgumentControl {
 
       if (this.argument.format === 'bool') {
         Toggle({ type: ToggleType.Switch, isOn: this.boolOf(this.value) })
+          .selectedColor(this.accent())
+          .switchPointColor(Color.White)
           .onTouch((event: TouchEvent) => {
             if (event.type === TouchType.Down) {
               this.userGesture = true;
@@ -124,13 +140,16 @@ export struct ActionArgumentControl {
           alignItems: ItemAlign.Center
         }) {
           ForEach(this.argument.options, (option: string, index?: number) => {
+            // 不用 ButtonStyleMode.EMPHASIZED：它的底色是 SDK 固定的强调色，
+            // 不跟随主题色。改成 NORMAL + 显式底色，和 PropertyControl 的选项一致。
             Button(option, {
               type: ButtonType.Capsule,
-              buttonStyle: this.value === this.argument.optionValues[index ?? 0]
-                ? ButtonStyleMode.EMPHASIZED : ButtonStyleMode.NORMAL,
+              buttonStyle: ButtonStyleMode.NORMAL,
               controlSize: ControlSize.SMALL
             })
               .fontColor(this.value === this.argument.optionValues[index ?? 0] ? '#FFFFFF' : HwColor.textPrimary)
+              .backgroundColor(this.value === this.argument.optionValues[index ?? 0]
+                ? HwColor.primary : '#1A000000')
               .stateEffect(true)
               .margin({ right: 8, bottom: 8 })
               .onClick(() => {
@@ -154,12 +173,5 @@ export struct ActionArgumentControl {
           })
       }
     }
-    .width('100%')
-    .padding(HwSpace.md)
-    .borderRadius(HwRadius.control)
-    .backgroundColor(HwGlassCardColor.surface)
-    .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-    .border({ width: 1, color: HwGlassCardColor.border })
-    .clip(true)
   }
 }

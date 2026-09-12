@@ -20,9 +20,21 @@
  */
 
 import { hdsEffect } from '@kit.UIDesignKit';
+import { HwColor } from '../utils/DesignTokens';
 
 @Component
 export struct PressableButton {
+  /**
+   * 主题色依赖。ButtonStyleMode.EMPHASIZED 的底色是 SDK 固定的强调色（蓝），
+   * 不读 accentColor 的话这里永远跟不上主题色。
+   */
+  @StorageProp('accentColor') accentColor: string = '';
+
+  /** 当前主题色 */
+  private accent(): string {
+    return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
+  }
+
   @Prop label: string = '';
   @Prop emphasized: boolean = true;
   @Prop loading: boolean = false;
@@ -43,6 +55,10 @@ export struct PressableButton {
     })
       .width(this.fullWidth ? '100%' : 'auto')
       .height(this.buttonHeight)
+      // 强调态自己指定底色，盖掉 SDK 默认强调色；普通态用系统标准按钮底色，
+      // 保证 emphasized: false 时的观感与原来一致。
+      .backgroundColor(this.emphasized
+        ? this.accent() : $r('sys.color.ohos_id_color_button_normal'))
       .enabled(!this.loading)
       .visualEffect(new hdsEffect.HdsEffectBuilder().pressShadow(this.pressShadow).buildEffect())
       .onTouch((event: TouchEvent) => {

@@ -1,0 +1,49 @@
+{
+  // 本文件是 build-profile.json5 的模板，**不含任何签名材料**，可安全提交。
+  //
+  // 使用方式：
+  //   1. 复制为仓库根目录的 build-profile.json5；
+  //   2. 在 DevEco Studio 中打开工程，通过
+  //      File > Project Structure > Signing Configs
+  //      勾选「Automatically generate signature」生成自己的证书，
+  //      生成的 signingConfigs 会自动写回 build-profile.json5；
+  //   3. build-profile.json5 已在 .gitignore 中，不会被提交。
+  //
+  // 不配置签名也能构建，但 hvigor 只会产出
+  // entry-default-unsigned.hap，安装时会报 no signature file。
+  "app": {
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compileSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.1(24)",
+        "targetSdkVersion": "26.0.0",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

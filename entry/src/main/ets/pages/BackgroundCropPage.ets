@@ -23,7 +23,7 @@ import { router, display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { HwColor } from '../utils/DesignTokens';
+import { reloadAppTheme, HwColor } from '../utils/DesignTokens';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { FeedbackLogService } from '../services/FeedbackLogService';
@@ -34,6 +34,8 @@ const MIN_CROP_WIDTH: number = 80;
 @Component
 struct BackgroundCropPage {
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
 
@@ -83,6 +85,11 @@ struct BackgroundCropPage {
   private gestureStartX: number = 0;
   private gestureStartY: number = 0;
   private gestureStartWidth: number = 0;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('背景裁剪页');

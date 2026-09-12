@@ -26,3 +26,28 @@ entry/.test/
 
 # ---- Logs ----
 *.log
+
+# ---- 签名物料与本地构建配置（绝不提交）----
+# 根 build-profile.json5 的 signingConfigs 里含证书路径、keyAlias 与
+# 加密后的 keyPassword / storePassword，提交即等于公开签名材料。
+# 每位开发者请在 DevEco Studio 里通过
+# File > Project Structure > Signing Configs 自动生成后填写；
+# 需要模板时参考已提交的 build-profile.example.json5。
+/build-profile.json5
+
+# 签名物料本体。DevEco 默认落在 ~/.ohos/config/，这里兜底防止被误拷进仓库。
+*.p12
+*.cer
+*.p7b
+*.csr
+*.keystore
+*.jks
+*.pem
+signature/
+**/signature/
+.ohos/
+**/.ohos/
+
+# 本地 SDK / 环境路径
+local.properties
+**/local.properties

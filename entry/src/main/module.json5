@@ -2,6 +2,16 @@
   "module": {
     "name": "entry",
     "type": "entry",
+    "metadata": [
+      {
+        // 应用级沉浸光感状态，uiMaterial.getMaterialInfo().state 就是读这里。
+        // default：普通组件可主动设置材质；enable：更多系统组件自动使用材质；
+        // disable：关闭整个应用的沉浸材质，连主动设置的材质也一并失效。
+        // 只有写在 entry 类型的 module 中才生效，改动后必须重新构建安装。
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
+      }
+    ],
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "deviceTypes": [
@@ -16,6 +26,10 @@
       },
       {
         "name": "ohos.permission.STORE_PERSISTENT_DATA"
+      },
+      {
+        // utils/Haptic.ets 的按键触感反馈依赖
+        "name": "ohos.permission.VIBRATE"
       }
     ],
     "deliveryWithInstall": true,

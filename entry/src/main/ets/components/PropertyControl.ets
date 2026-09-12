@@ -23,24 +23,25 @@ import {
   CapabilityControlType,
   PropertyControlDescriptor
 } from './CapabilityRenderer';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, MijiaOffButton, withAlpha } from '../utils/DesignTokens';
 import { isCelsiusUnit, celsiusToFahrenheit, fahrenheitToCelsius } from '../utils/TemperatureDisplay';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier } from '../utils/SystemMaterial';
+import { MaterialCard } from './MaterialCard';
 import { IconCircleButton } from './IconCircleButton';
 
 @Component
 export struct PropertyControl {
-  @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色：控件自己建立依赖，切色时能重新求值（描述符里的 onColor 是一次性生成的） */
+  @StorageProp('accentColor') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
 
   private appFontFamily(content: string): string {
     if (this.fontMode !== 'custom') {
-      return 'HarmonyOS Sans';
+      return '';
     }
     const family = this.hasCjk(content) ? this.fontFamilyZh : this.fontFamilyEn;
-    return family === 'system' || family.length === 0 ? 'HarmonyOS Sans' : family;
+    return family === 'system' || family.length === 0 ? '' : family;
   }
 
   private hasCjk(content: string): boolean {
@@ -60,13 +61,17 @@ export struct PropertyControl {
   }
   @Prop control: PropertyControlDescriptor;
   @Prop @Watch('onValuePropChanged') value: Object | undefined;
+  // 1×1 紧凑卡片模式（设备详情页网格），否则为整行卡片（场景动作选择页）
+  @Prop compact: boolean = false;
+  // 整行模式下枚举选项单行等宽摆放（设备详情页模式/挡位卡）
+  @Prop selectSingleRow: boolean = false;
   @StorageProp('temperatureFahrenheit') temperatureFahrenheit: boolean = false;
   @StorageProp('temperatureShowUnit') temperatureShowUnit: boolean = false;
   onChanged: (value: Object) => void = (): void => {
   };
   @State private lastValue: Object | undefined = undefined;
-  @State private userGesture: boolean = false;
   @State private draft: string = '';
+  @State private powerPressed: boolean = false;
 
   aboutToAppear(): void {
     this.lastValue = this.value;
@@ -210,196 +215,489 @@ export struct PropertyControl {
       this.control.type === CapabilityControlType.VOLUME;
   }
 
+  @Styles
+  cardPressedStyle() {
+    .backgroundColor(HwColor.background)
+  }
+
+  /** 当前主题色：读 accentColor 建立依赖，否则会停留在旧色 */
+  private accent(): string {
+    return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
+  }
+
   build() {
-    Column({ space: 6 }) {
-      Row() {
-        Text(this.control.label)
-          .fontFamily(this.appFontFamily(this.control.label))
-          .fontWeight(this.appFontWeight())
-          .fontSize(15)
-          .fontColor(HwColor.textPrimary)
-        Blank()
-        if (this.unitText().length > 0 &&
-          !this.isSteppedControl()) {
-          Text(this.unitText())
-            .fontFamily(this.appFontFamily(this.unitText()))
-            .fontWeight(this.appFontWeight())
-            .fontSize(12)
-            .fontColor(HwColor.textSecondary)
+    if (this.compact) {
+      // 1×1 紧凑卡片：minHeight 保证常规情况下网格内卡片大小一致，
+      // 内容过多时自动增高避免文字被裁剪
+      MaterialCard({
+        cardRadius: HwRadius.card,
+        cardPadding: HwSpace.md,
+        // 承载沉浸光感：米家深色卡不透光，卡面统一改为玻璃光感
+        cardMaterialEnabled: true
+      }) {
+        Column({ space: 8 }) {
+          this.compactContent()
         }
+        .width('100%')
+        .constraintSize({ minHeight: 104 })
+        .justifyContent(FlexAlign.SpaceBetween)
+        .stateStyles({ pressed: this.cardPressedStyle })
       }
+    } else {
+      MaterialCard({
+        cardRadius: HwRadius.control,
+        cardPadding: HwSpace.md,
+        cardMaterialEnabled: true
+      }) {
+        Column({ space: 8 }) {
+          this.wideContent()
+        }
+        .width('100%')
+        .stateStyles({ pressed: this.cardPressedStyle })
+      }
+    }
+  }
+
+  // 1×1 紧凑卡片：标签在上 + 对应控件
+  @Builder
+  compactContent() {
+    Text(this.control.label)
+      .fontFamily(this.appFontFamily(this.control.label))
+      .fontWeight(this.appFontWeight())
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(HwColor.textSecondary)
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
       .width('100%')
 
-      if (this.control.type === CapabilityControlType.TOGGLE) {
+    if (this.control.type === CapabilityControlType.TOGGLE) {
+      this.compactToggle()
+    } else if (this.control.type === CapabilityControlType.SLIDER) {
+      this.compactSlider()
+    } else if (this.isSteppedControl()) {
+      this.compactStepped()
+    } else if (this.control.type === CapabilityControlType.SELECT) {
+      this.compactSelect()
+    } else if (this.control.type === CapabilityControlType.TEXT) {
+      this.compactText()
+    } else if (this.control.type === CapabilityControlType.READOUT) {
+      this.compactReadout()
+    }
+  }
+
+  // 开关：仅主电源开关用大圆按钮（开启亮绿 / 关闭暗灰），
+  // 其它开关（指示灯、模式等）使用常规 Switch 开关
+  @Builder
+  compactToggle() {
+    if (this.control.isPower) {
+      Stack({ alignContent: Alignment.Center }) {
+        Circle()
+          .width(64)
+          .height(64)
+          .fill(this.boolOf(this.value) ? this.accent() : MijiaOffButton)
+        SymbolGlyph($r('sys.symbol.power'))
+          .fontSize(26)
+          .fontColor([this.boolOf(this.value) ? Color.White : HwColor.textSecondary])
+      }
+      .width(64)
+      .height(64)
+      .enabled(this.control.writable)
+      .scale({
+        x: this.powerPressed ? 0.92 : 1,
+        y: this.powerPressed ? 0.92 : 1
+      })
+      .animation({ duration: 120, curve: Curve.EaseOut })
+      .onTouch((event: TouchEvent) => {
+        this.powerPressed = event.type === TouchType.Down;
+      })
+      .onClick(() => {
+        this.onChanged(!this.boolOf(this.value));
+      })
+    } else {
+      Row({ space: 8 }) {
+        Text(this.boolOf(this.value) ? '开启' : '关闭')
+          .fontFamily(this.appFontFamily(this.boolOf(this.value) ? '开启' : '关闭'))
+          .fontWeight(this.appFontWeight())
+          .fontSize(14)
+          .fontColor(HwColor.primary)
+        Blank()
         Toggle({ type: ToggleType.Switch, isOn: this.boolOf(this.value) })
           .enabled(this.control.writable)
-          .onTouch((event: TouchEvent) => {
-            if (event.type === TouchType.Down) {
-              this.userGesture = true;
-            }
-          })
+          .selectedColor(this.accent())
+          .switchPointColor(Color.White)
           .onChange((isOn: boolean) => {
-            if (!this.userGesture) {
-              return;
-            }
-            this.userGesture = false;
             if (isOn === this.boolOf(this.lastValue)) {
               return;
             }
             this.onChanged(isOn);
           })
       }
+      .width('100%')
+      .height(64)
+      .alignItems(VerticalAlign.Center)
+    }
+  }
 
-      if (this.control.type === CapabilityControlType.SLIDER) {
-        Slider({
-          value: this.numberOf(this.value),
-          min: this.control.min,
-          max: this.control.max,
-          step: this.control.step,
-          style: SliderStyle.OutSet
+  // 滑块：数值 + 滑块
+  @Builder
+  compactSlider() {
+    Column({ space: 6 }) {
+      Text(this.sliderText())
+        .fontFamily(this.appFontFamily(this.sliderText()))
+        .fontWeight(this.appFontWeight())
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(HwColor.primary)
+      Slider({
+        value: this.numberOf(this.value),
+        min: this.control.min,
+        max: this.control.max,
+        step: this.control.step,
+        style: SliderStyle.OutSet
+      })
+        .enabled(this.control.writable)
+        .selectedColor(this.accent())
+        .trackColor('#1A000000')
+        .blockColor(Color.White)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
+            return;
+          }
+          if (value === this.numberOf(this.lastValue)) {
+            return;
+          }
+          this.onChanged(value);
         })
+    }
+    .width('100%')
+  }
+
+  // 温度/音量：数值 + 滑块（所有数值调节统一改为滑块）
+  @Builder
+  compactStepped() {
+    Column({ space: 6 }) {
+      Text(this.steppedText())
+        .fontFamily(this.appFontFamily(this.steppedText()))
+        .fontWeight(this.appFontWeight())
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(HwColor.primary)
+      Slider({
+        value: this.displayValue(),
+        min: this.controlMin(),
+        max: this.controlMax(),
+        step: this.controlStep(),
+        style: SliderStyle.OutSet
+      })
+        .enabled(this.control.writable)
+        .selectedColor(this.accent())
+        .trackColor('#1A000000')
+        .blockColor(Color.White)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
+            return;
+          }
+          if (value === this.lastDisplayValue()) {
+            return;
+          }
+          this.onChanged(this.commitDisplayValue(value));
+        })
+    }
+    .width('100%')
+  }
+
+  // 枚举选择：胶囊选项，选中高亮
+  @Builder
+  compactSelect() {
+    Flex({
+      wrap: FlexWrap.Wrap,
+      justifyContent: FlexAlign.SpaceBetween,
+      alignItems: ItemAlign.Start
+    }) {
+      ForEach(this.control.options, (option: string, index?: number) => {
+        Text(option)
+          .fontFamily(this.appFontFamily(option))
+          .fontWeight(this.appFontWeight())
+          .fontSize(13)
+          .fontColor(this.value === this.control.optionValues[index ?? 0]
+            ? HwColor.primary : HwColor.textPrimary)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(HwRadius.pill)
+          .backgroundColor(this.value === this.control.optionValues[index ?? 0]
+            ? withAlpha(HwColor.primary, 0.15) : '#1A000000')
+          .border({
+            width: 1,
+            color: this.value === this.control.optionValues[index ?? 0]
+              ? HwColor.primary : '#1A000000'
+          })
+          .margin({ bottom: 8 })
           .enabled(this.control.writable)
-          .onTouch((event: TouchEvent) => {
-            if (event.type === TouchType.Down) {
-              this.userGesture = true;
-            }
+          .onClick(() => {
+            this.onChanged(this.control.optionValues[index ?? 0]);
           })
-          .onChange((value: number, mode: SliderChangeMode) => {
-            if (!this.userGesture) {
-              return;
-            }
-            if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
-              return;
-            }
-            this.userGesture = false;
-            if (value === this.numberOf(this.lastValue)) {
-              return;
-            }
-            this.onChanged(value);
-          })
+      }, (option: string, index?: number) => `${index ?? 0}_${option}`)
+    }
+    .width('100%')
+  }
 
-        Text(this.sliderText())
-          .fontFamily(this.appFontFamily(this.sliderText()))
+  // 文本输入
+  @Builder
+  compactText() {
+    TextInput({ text: this.draft, placeholder: '请输入' })
+      .enabled(this.control.writable)
+      .fontSize(14)
+      .maxLength(200)
+      .enterKeyType(EnterKeyType.Done)
+      .onChange((value: string) => {
+        this.draft = value;
+      })
+      .onSubmit(() => {
+        this.commitText();
+      })
+      .onBlur(() => {
+        this.commitText();
+      })
+      .width('100%')
+  }
+
+  // 只读读数：大数值
+  @Builder
+  compactReadout() {
+    Text(this.readoutText())
+      .fontFamily(this.appFontFamily(this.readoutText()))
+      .fontWeight(this.appFontWeight())
+      .fontSize(22)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(HwColor.primary)
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+  }
+
+  // 整行卡片（场景动作选择页使用）
+  @Builder
+  wideContent() {
+    Row() {
+      Text(this.control.label)
+        .fontFamily(this.appFontFamily(this.control.label))
+        .fontWeight(this.appFontWeight())
+        .fontSize(15)
+        .fontColor(HwColor.textPrimary)
+      Blank()
+      if (this.unitText().length > 0 &&
+        !this.isSteppedControl()) {
+        Text(this.unitText())
+          .fontFamily(this.appFontFamily(this.unitText()))
           .fontWeight(this.appFontWeight())
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-      }
-
-      if (this.isSteppedControl()) {
-        Row({ space: 8 }) {
-          IconCircleButton({
-            symbol: $r('sys.symbol.minus'),
-            buttonSize: 36,
-            iconSize: 18,
-            buttonEnabled: this.control.writable && this.hasValue() &&
-              this.displayValue() > this.controlMin(),
-            onAction: () => {
-              this.stepSteppedValue(-1);
-            }
-          })
-          Slider({
-            value: this.displayValue(),
-            min: this.controlMin(),
-            max: this.controlMax(),
-            step: this.controlStep(),
-            style: SliderStyle.OutSet
-          })
-            .layoutWeight(1)
-            .enabled(this.control.writable)
-            .onTouch((event: TouchEvent) => {
-              if (event.type === TouchType.Down) {
-                this.userGesture = true;
-              }
-            })
-            .onChange((value: number, mode: SliderChangeMode) => {
-              if (!this.userGesture) {
-                return;
-              }
-              if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
-                return;
-              }
-              this.userGesture = false;
-              if (value === this.lastDisplayValue()) {
-                return;
-              }
-              this.onChanged(this.commitDisplayValue(value));
-            })
-          IconCircleButton({
-            symbol: $r('sys.symbol.plus'),
-            buttonSize: 36,
-            iconSize: 18,
-            buttonEnabled: this.control.writable && this.hasValue() &&
-              this.displayValue() < this.controlMax(),
-            onAction: () => {
-              this.stepSteppedValue(1);
-            }
-          })
-        }
-        .width('100%')
-
-        Text(this.steppedText())
-          .fontFamily(this.appFontFamily(this.steppedText()))
-          .fontWeight(this.appFontWeight())
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-      }
-
-      if (this.control.type === CapabilityControlType.TEXT) {
-        TextInput({ text: this.draft })
-          .enabled(this.control.writable)
-          .onChange((value: string) => {
-            this.draft = value;
-          })
-          .onSubmit(() => {
-            this.commitText();
-          })
-          .onBlur(() => {
-            this.commitText();
-          })
-      }
-
-      if (this.control.type === CapabilityControlType.SELECT) {
-        Flex({
-          wrap: FlexWrap.Wrap,
-          justifyContent: FlexAlign.Start,
-          alignItems: ItemAlign.Center
-        }) {
-          ForEach(this.control.options, (option: string, index?: number) => {
-            Button(option, {
-              type: ButtonType.Capsule,
-              buttonStyle: this.value === this.control.optionValues[index ?? 0]
-                ? ButtonStyleMode.EMPHASIZED : ButtonStyleMode.NORMAL,
-              controlSize: ControlSize.SMALL
-            })
-              .enabled(this.control.writable)
-              .fontColor(this.value === this.control.optionValues[index ?? 0] ? '#FFFFFF' : HwColor.textPrimary)
-              .stateEffect(true)
-              .margin({ right: 8, bottom: 8 })
-              .onClick(() => {
-                this.onChanged(this.control.optionValues[index ?? 0]);
-              })
-          }, (option: string) => option)
-        }
-        .width('100%')
-      }
-
-      if (this.control.type === CapabilityControlType.READOUT) {
-        Text(this.readoutText())
-          .fontFamily(this.appFontFamily(this.readoutText()))
-          .fontWeight(this.appFontWeight())
-          .fontSize(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
+          .fontSize(12)
+          .fontColor(HwColor.textSecondary)
       }
     }
     .width('100%')
-    .padding(HwSpace.md)
-    .borderRadius(HwRadius.control)
-    .backgroundColor(HwGlassCardColor.surface)
-    .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-    .border({ width: 1, color: HwGlassCardColor.border })
-    .clip(true)
+
+    if (this.control.type === CapabilityControlType.TOGGLE) {
+      Toggle({ type: ToggleType.Switch, isOn: this.boolOf(this.value) })
+        .enabled(this.control.writable)
+        .selectedColor(this.accent())
+        .switchPointColor(Color.White)
+        .onChange((isOn: boolean) => {
+          if (isOn === this.boolOf(this.lastValue)) {
+            return;
+          }
+          this.onChanged(isOn);
+        })
+    }
+
+    if (this.control.type === CapabilityControlType.SLIDER) {
+      Slider({
+        value: this.numberOf(this.value),
+        min: this.control.min,
+        max: this.control.max,
+        step: this.control.step,
+        style: SliderStyle.OutSet
+      })
+        .enabled(this.control.writable)
+        .selectedColor(this.accent())
+        .trackColor('#1A000000')
+        .blockColor(Color.White)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
+            return;
+          }
+          if (value === this.numberOf(this.lastValue)) {
+            return;
+          }
+          this.onChanged(value);
+        })
+
+      Text(this.sliderText())
+        .fontFamily(this.appFontFamily(this.sliderText()))
+        .fontWeight(this.appFontWeight())
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(HwColor.textPrimary)
+    }
+
+    if (this.isSteppedControl()) {
+      Row({ space: 8 }) {
+        IconCircleButton({
+          symbol: $r('sys.symbol.minus'),
+          buttonSize: 36,
+          iconSize: 18,
+          buttonEnabled: this.control.writable && this.hasValue() &&
+            this.displayValue() > this.controlMin(),
+          onAction: () => {
+            this.stepSteppedValue(-1);
+          }
+        })
+        Slider({
+          value: this.displayValue(),
+          min: this.controlMin(),
+          max: this.controlMax(),
+          step: this.controlStep(),
+          style: SliderStyle.OutSet
+        })
+          .layoutWeight(1)
+          .enabled(this.control.writable)
+          .selectedColor(this.accent())
+          .trackColor('#1A000000')
+          .blockColor(Color.White)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) {
+              return;
+            }
+            if (value === this.lastDisplayValue()) {
+              return;
+            }
+            this.onChanged(this.commitDisplayValue(value));
+          })
+        IconCircleButton({
+          symbol: $r('sys.symbol.plus'),
+          buttonSize: 36,
+          iconSize: 18,
+          buttonEnabled: this.control.writable && this.hasValue() &&
+            this.displayValue() < this.controlMax(),
+          onAction: () => {
+            this.stepSteppedValue(1);
+          }
+        })
+      }
+      .width('100%')
+
+      Text(this.steppedText())
+        .fontFamily(this.appFontFamily(this.steppedText()))
+        .fontWeight(this.appFontWeight())
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(HwColor.textPrimary)
+    }
+
+    if (this.control.type === CapabilityControlType.TEXT) {
+      TextInput({ text: this.draft, placeholder: '请输入' })
+        .enabled(this.control.writable)
+        .maxLength(200)
+        .enterKeyType(EnterKeyType.Done)
+        .onChange((value: string) => {
+          this.draft = value;
+        })
+        .onSubmit(() => {
+          this.commitText();
+        })
+        .onBlur(() => {
+          this.commitText();
+        })
+    }
+
+    if (this.control.type === CapabilityControlType.SELECT) {
+      if (this.selectSingleRow) {
+        // 单行等宽摆放：所有挡位/模式按钮占满一排（对齐米家）
+        Row({ space: 8 }) {
+          ForEach(this.control.options, (option: string, index?: number) => {
+            Text(option)
+              .fontFamily(this.appFontFamily(option))
+              .fontWeight(this.appFontWeight())
+              .fontSize(13)
+              .fontColor(this.value === this.control.optionValues[index ?? 0]
+                ? HwColor.primary : HwColor.textPrimary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .textAlign(TextAlign.Center)
+              .height(40)
+              .constraintSize({ minWidth: 56 })
+              .padding({ left: 8, right: 8 })
+              .borderRadius(HwRadius.control)
+              .backgroundColor(this.value === this.control.optionValues[index ?? 0]
+                ? withAlpha(HwColor.primary, 0.15) : '#1A000000')
+              .border({
+                width: 1,
+                color: this.value === this.control.optionValues[index ?? 0]
+                  ? HwColor.primary : '#1A000000'
+              })
+              .clip(true)
+              .enabled(this.control.writable)
+              .layoutWeight(1)
+              .onClick(() => {
+                this.onChanged(this.control.optionValues[index ?? 0]);
+              })
+          }, (option: string, index?: number) => `row_${index ?? 0}_${option}`)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+      } else {
+      Flex({
+        wrap: FlexWrap.Wrap,
+        justifyContent: FlexAlign.SpaceBetween,
+        alignItems: ItemAlign.Start
+      }) {
+        ForEach(this.control.options, (option: string, index?: number) => {
+          Column() {
+            Column({ space: 4 }) {
+              Text(option)
+                .fontFamily(this.appFontFamily(option))
+                .fontWeight(this.appFontWeight())
+                .fontSize(14)
+                .fontColor(this.value === this.control.optionValues[index ?? 0]
+                  ? HwColor.primary : HwColor.textPrimary)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .textAlign(TextAlign.Center)
+            }
+            .width('100%')
+            .constraintSize({ minHeight: 56 })
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+            .borderRadius(HwRadius.control)
+            .backgroundColor(this.value === this.control.optionValues[index ?? 0]
+              ? withAlpha(HwColor.primary, 0.15) : '#1A000000')
+            .border({
+              width: 1,
+              color: this.value === this.control.optionValues[index ?? 0]
+                ? HwColor.primary : '#1A000000'
+            })
+            .clip(true)
+            .enabled(this.control.writable)
+            .onClick(() => {
+              this.onChanged(this.control.optionValues[index ?? 0]);
+            })
+          }
+          .width('48.5%')
+          .margin({ bottom: 10 })
+        }, (option: string, index?: number) => `${index ?? 0}_${option}`)
+      }
+      .width('100%')
+      }
+    }
+
+    if (this.control.type === CapabilityControlType.READOUT) {
+      Text(this.readoutText())
+        .fontFamily(this.appFontFamily(this.readoutText()))
+        .fontWeight(this.appFontWeight())
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(HwColor.textPrimary)
+    }
   }
 }

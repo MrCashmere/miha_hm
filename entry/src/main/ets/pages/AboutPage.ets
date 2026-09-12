@@ -21,7 +21,8 @@
 
 import { router } from '@kit.ArkUI';
 import { bundleManager, common, Want } from '@kit.AbilityKit';
-import { HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { FeedbackLogService } from '../services/FeedbackLogService';
@@ -30,6 +31,8 @@ import { FeedbackLogService } from '../services/FeedbackLogService';
 @Component
 struct AboutPage {
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
 
@@ -61,6 +64,11 @@ struct AboutPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @State versionName: string = '';
   @State versionCode: number = 0;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('关于页');
@@ -129,6 +137,8 @@ struct AboutPage {
 
   build() {
     Stack() {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Row() {

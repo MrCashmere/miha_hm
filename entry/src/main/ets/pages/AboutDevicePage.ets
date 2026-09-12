@@ -21,8 +21,8 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier } from '../utils/SystemMaterial';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { AccentColorSentinel, MaterialCard } from '../components/MaterialCard';
 import { AppBackground } from '../components/AppBackground';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AboutDeviceRouteParam } from '../models/NavRouteParams';
@@ -41,8 +41,9 @@ export function AboutDeviceBuilder(name: string, param: Object) {
 
 @Component
 export struct AboutDevicePage {
-  @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontMode') fontMode: string = 'system';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
@@ -79,6 +80,11 @@ export struct AboutDevicePage {
   @Prop firmware: string = '';
   private scroller: Scroller = new Scroller();
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('关于设备页');
@@ -129,13 +135,19 @@ export struct AboutDevicePage {
   build() {
     HdsNavDestination() {
       Stack({ alignContent: Alignment.TopStart }) {
+        // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+        AccentColorSentinel()
         AppBackground()
 
         Scroll(this.scroller) {
           Column({ space: 0 }) {
             Blank().height(56 + this.statusBarHeight)
 
-            Column({ space: 0 }) {
+            MaterialCard({
+              cardSpace: 0,
+              cardRadius: HwRadius.card,
+              cardMargin: { left: HwSpace.lg, right: HwSpace.lg }
+            }) {
               this.infoRow('设备名称', this.deviceName)
               Divider()
                 .color('#14000000')
@@ -154,13 +166,6 @@ export struct AboutDevicePage {
                 .margin({ left: HwSpace.lg, right: HwSpace.lg })
               this.infoRow('固件版本', this.firmware)
             }
-            .width('100%')
-            .borderRadius(HwRadius.card)
-            .backgroundColor(HwGlassCardColor.surface)
-            .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-            .border({ width: 1, color: HwGlassCardColor.border })
-            .clip(true)
-            .margin({ left: HwSpace.lg, right: HwSpace.lg })
 
             Blank().height(40)
           }

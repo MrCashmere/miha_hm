@@ -20,8 +20,8 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier } from '../utils/SystemMaterial';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { MaterialCard , AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { FeedbackLogService } from '../services/FeedbackLogService';
@@ -30,8 +30,9 @@ import { BackupRestoreService, BackupRestorePackage } from '../services/BackupRe
 @Entry
 @Component
 struct BackupRestorePage {
-  @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
   @StorageLink('fontWeightMode') fontWeightMode: string = 'system';
@@ -62,6 +63,11 @@ struct BackupRestorePage {
 
   private appFontWeight(): number {
     return this.fontWeightMode === 'custom' ? this.fontWeightValue : 400;
+  }
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
   }
 
   aboutToAppear(): void {
@@ -183,6 +189,8 @@ struct BackupRestorePage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Scroll() {
@@ -196,7 +204,15 @@ struct BackupRestorePage {
                 .fontColor(HwColor.textSecondary)
                 .width('100%')
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardRadius: HwRadius.card,
+                cardPadding: HwSpace.lg,
+                cardDirection: FlexDirection.Row,
+                cardSpace: 12,
+                cardOnClick: () => {
+                  this.exportConfig();
+                }
+              }) {
                 Column({ space: 4 }) {
                   Text('导出配置文件')
                     .fontFamily(this.appFontFamily('导出配置文件'))
@@ -215,18 +231,16 @@ struct BackupRestorePage {
                   .fontSize(16)
                   .fontColor([HwColor.textSecondary])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .onClick(() => {
-                this.exportConfig();
-              })
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardRadius: HwRadius.card,
+                cardPadding: HwSpace.lg,
+                cardDirection: FlexDirection.Row,
+                cardSpace: 12,
+                cardOnClick: () => {
+                  this.restoreConfig();
+                }
+              }) {
                 Column({ space: 4 }) {
                   Text('恢复配置文件')
                     .fontFamily(this.appFontFamily('恢复配置文件'))
@@ -245,16 +259,6 @@ struct BackupRestorePage {
                   .fontSize(16)
                   .fontColor([HwColor.textSecondary])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .onClick(() => {
-                this.restoreConfig();
-              })
 
               if (this.busy) {
                 Row({ space: 8 }) {
