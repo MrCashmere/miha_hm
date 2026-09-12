@@ -26,7 +26,8 @@ import {
 import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { Logger } from '../utils/Logger';
-import { HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { AccentColorSentinel } from '../components/MaterialCard';
 import { PressableButton } from '../components/PressableButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -35,6 +36,8 @@ import { AppSettingsStore } from '../storage/AppSettingsStore';
 @Component
 struct LoginPage {
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
 
@@ -60,6 +63,11 @@ struct LoginPage {
 
   private appFontWeight(): number {
     return this.fontWeightMode === 'custom' ? this.fontWeightValue : 400;
+  }
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
   }
 
   aboutToAppear(): void {
@@ -108,6 +116,8 @@ struct LoginPage {
 
   build() {
     Stack() {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Column({ space: HwSpace.sm }) {

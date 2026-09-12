@@ -20,13 +20,15 @@
  */
 
 import { router, uiAppearance } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
+import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier } from '../utils/SystemMaterial';
+import { ACCENT_PRESETS, ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, AccentPreset, HwColor, HwRadius, HwSpace, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor,
+  applyAppTheme } from '../utils/DesignTokens';
+import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
+import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -53,7 +55,11 @@ struct AppearanceSettingsPage {
     return false;
   }
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
-  @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
+  /** 深色模式。用 @StorageLink 而非 @StorageProp：开关需要写回 AppStorage，
+   *  其余页面订阅同一个键，切一下全应用跟着变。 */
+  @StorageLink('isDarkMode') isDarkMode: boolean = false;
   @StorageLink('backgroundImage') wallpaperImage: string = '';
   @StorageLink('autoMultiColumn') autoMultiColumn: boolean = false;
   @StorageLink('fontMode') fontMode: string = 'system';
@@ -66,15 +72,58 @@ struct AppearanceSettingsPage {
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
   @StorageLink('customFonts') customFonts: string[] = [];
+  /** 主题色：预设 key（harmony/rose/custom） */
+  @StorageLink('accentKey') accentKey: string = 'harmony';
+  /** 自定义主题色（RRGGBB，不含 #） */
+  @StorageLink('accentCustom') accentCustom: string = '';
+  /** 用户新增的自定义主题色列表（RRGGBB，不含 #），顺序即展示顺序 */
+  @State accentList: string[] = [];
+  /** 自定义主题色的输入弹窗 */
+  @State showAccentSheet: boolean = false;
+  /** 自定义输入框草稿与校验提示 */
+  @State accentDraft: string = '';
+  @State accentError: string = '';
   @State backgroundMessage: string = '';
   @State fontMessage: string = '';
   @State availableFonts: string[] = [];
 
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
+
+  /**
+   * 开关的选中色。
+   * 读 accentColor 建立依赖：直接写 HwColor.primary 在切主题色后不会重新求值，
+   * 开关会停留在旧色。
+   */
+  private accentOrPrimary(): string {
+    return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
+  }
+
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('外观设置页');
+    this.loadAccentList();
     this.loadCustomFonts();
     this.refreshAvailableFonts();
     this.applyFontSizeScale();
+  }
+
+  /**
+   * 读入自定义主题色列表。
+   *
+   * 兼容旧版本：早期只有一个 accentCustom，没有列表，这里把它补进列表，
+   * 否则升级后用户原有那个自定义色会在界面上凭空消失。
+   */
+  private loadAccentList(): void {
+    const stored = AppSettingsStore.getStringArray(ACCENT_CUSTOM_LIST_STORAGE, []);
+    const list = normalizeAccentList(stored);
+    const current = normalizeAccentHex(this.accentCustom).replace('#', '');
+    if (current.length === 6 && list.indexOf(current) < 0) {
+      list.push(current);
+      AppSettingsStore.setStringArray(ACCENT_CUSTOM_LIST_STORAGE, list);
+    }
+    this.accentList = list;
   }
 
   onPageShow(): void {
@@ -299,6 +348,327 @@ struct AppearanceSettingsPage {
     AppSettingsStore.setNumber('fontWeightValue', weight);
   }
 
+  // ==================== 主题色 ====================
+
+  /** 选择预设主题色并立即生效 */
+  private selectAccentPreset(key: string): void {
+    this.accentKey = key;
+    AppSettingsStore.setString(ACCENT_KEY_STORAGE, key);
+    this.applyAccentNow();
+    FeedbackLogService.recordOperation('UI', `切换主题色预设 ${key}`);
+  }
+
+  /**
+   * 新增自定义主题色。
+   * 只接受 6 位十六进制；非法输入不入列表也不改主题，避免把配色改成不可读的颜色。
+   * 新色追加到列表末尾——也就是「新增」按钮的前面——并立即选中生效。
+   */
+  private addCustomAccent(): void {
+    const normalized = normalizeAccentHex(this.accentDraft);
+    if (normalized.length === 0) {
+      this.accentError = '请输入 6 位十六进制颜色，例如 1A2B3C';
+      return;
+    }
+    this.accentError = '';
+    const hex = normalized.replace('#', '');
+    if (this.accentList.indexOf(hex) < 0) {
+      this.accentList.push(hex);
+      AppSettingsStore.setStringArray(ACCENT_CUSTOM_LIST_STORAGE, this.accentList);
+    }
+    this.accentDraft = '';
+    this.showAccentSheet = false;
+    this.selectCustomAccent(hex);
+    FeedbackLogService.recordOperation('UI', `新增自定义主题色 ${normalized}`);
+  }
+
+  /** 选中列表里的某个自定义主题色 */
+  private selectCustomAccent(hex: string): void {
+    this.accentKey = 'custom';
+    this.accentCustom = hex;
+    AppSettingsStore.setString(ACCENT_KEY_STORAGE, 'custom');
+    AppSettingsStore.setString(ACCENT_CUSTOM_STORAGE, hex);
+    this.applyAccentNow();
+  }
+
+  /** 该自定义色当前是否被选中 */
+  private isCustomSelected(hex: string): boolean {
+    return this.accentKey === 'custom' && this.accentCustom.toUpperCase() === hex.toUpperCase();
+  }
+
+  /**
+   * 删除一个自定义主题色。
+   * 删掉的正好是当前选中色时，回落到第一个预设色——否则 accentCustom 会指向
+   * 一个已经不在列表里的值，界面看上去「选中态凭空消失」。
+   */
+  private removeCustomAccent(hex: string): void {
+    const index = this.accentList.indexOf(hex);
+    if (index < 0) {
+      return;
+    }
+    const wasSelected = this.isCustomSelected(hex);
+    this.accentList.splice(index, 1);
+    AppSettingsStore.setStringArray(ACCENT_CUSTOM_LIST_STORAGE, this.accentList);
+    if (wasSelected) {
+      this.selectAccentPreset(ACCENT_PRESETS[0].key);
+    }
+    FeedbackLogService.recordOperation('UI', `删除自定义主题色 #${hex}`);
+  }
+
+  /**
+   * 主题色实时生效。
+   *
+   * 把新值写进 AppStorage（accentKey/accentCustom/isDarkMode 已是 @StorageLink，
+   * 写入即同步）后，再广播 accentColor；各页面的 @Watch 会重建并读到新色值。
+   * 只改 HwColor 属性不会触发刷新，所以必须走这条广播链。
+   */
+  private applyAccentNow(): void {
+    AppStorage.setOrCreate('accentKey', this.accentKey);
+    AppStorage.setOrCreate('accentCustom', this.accentCustom);
+    AppStorage.setOrCreate('isDarkMode', this.isDarkMode);
+    reloadAppTheme();
+  }
+
+  /** 当前选中色，用于选择器上的对勾与色块 */
+  private currentAccent(): string {
+    return resolveAccentColor(this.accentKey, this.accentCustom);
+  }
+
+  /**
+   * 切换深色模式。
+   *
+   * 这里写入 `darkModeEnabled` 之后，启动逻辑就会以应用内开关为准、不再跟随系统。
+   * 同时要把平台配色一起下发，否则系统控件（弹窗、输入法等）会和自绘颜色一深一浅。
+   */
+  private setDarkMode(enabled: boolean): void {
+    // 写入这个键之后，启动逻辑就会以应用内开关为准，不再跟随系统
+    AppSettingsStore.setBoolean('darkModeEnabled', enabled);
+    // HwColor 是模块级对象，改属性不会触发任何刷新，所以改完必须广播订阅键。
+    applyAppTheme(enabled);
+    // isDarkMode 是 @StorageLink，赋值会同步写回 AppStorage，
+    // 其余 14 个订阅该键的页面随即重建、取到新的 HwColor 值。
+    this.isDarkMode = enabled;
+    // accentColor 与 isDarkMode 同属一条广播链，一并重发一次
+    AppStorage.setOrCreate('accentKey', this.accentKey);
+    AppStorage.setOrCreate('accentCustom', this.accentCustom);
+    AppStorage.setOrCreate('accentColor', this.accentColor);
+    try {
+      (getContext(this) as common.UIAbilityContext).getApplicationContext().setColorMode(
+        enabled ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+                : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+      );
+    } catch (err) {
+    }
+    FeedbackLogService.recordOperation('UI', `切换深色模式 ${enabled ? '开' : '关'}`);
+  }
+
+  /**
+   * 一个主题色色块按钮。
+   *
+   * 与预设色块完全同构（圆点 + 名称），差别只在：
+   *   - 自定义色的 `removable` 为 true，右上角叠一个删除角标；
+   *   - 角标是 MaterialCard 的**兄弟节点**而不是子节点。ArkUI 的点击会向父级冒泡，
+   *     做成子节点的话点删除会连带触发一次选中；做成兄弟节点后两者互不干扰。
+   */
+  @Builder
+  accentSwatch(key: string, color: string, label: string, selected: boolean, removable: boolean) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      MaterialCard({
+        cardWidth: 64,
+        cardPadding: 8,
+        cardRadius: HwRadius.control,
+        cardSpace: 6,
+        cardHoverEffect: HoverEffect.Highlight,
+        cardFocusable: true,
+        cardOnClick: (): void => {
+          if (removable) {
+            this.selectCustomAccent(key);
+          } else {
+            this.selectAccentPreset(key);
+          }
+        }
+      }) {
+        Column({ space: 6 }) {
+          Stack({ alignContent: Alignment.Center }) {
+            Circle()
+              .width(34)
+              .height(34)
+              .fill(color)
+            if (selected) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(16)
+                .fontColor([Color.White])
+            }
+          }
+          .width(34)
+          .height(34)
+
+          Text(label)
+            .fontFamily(this.appFontFamily(label))
+            .fontWeight(this.appFontWeight())
+            .fontSize(12)
+            .fontColor(selected ? HwColor.primary : HwColor.textSecondary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+      }
+
+      if (removable) {
+        // 删除角标：半透明黑底保证在浅色/深色材质上都看得清
+        Stack({ alignContent: Alignment.Center }) {
+          Circle()
+            .width(20)
+            .height(20)
+            .fill('#99000000')
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(11)
+            .fontColor([Color.White])
+        }
+        .width(20)
+        .height(20)
+        .margin({ top: 4, right: 4 })
+        .onClick((): void => {
+          this.removeCustomAccent(key);
+        })
+      }
+    }
+    .margin({ right: HwSpace.md, bottom: HwSpace.md })
+  }
+
+  /** 「新增自定义色」按钮：与色块同尺寸同排版，只把圆点换成加号 */
+  @Builder
+  addAccentSwatch() {
+    MaterialCard({
+      cardWidth: 64,
+      cardPadding: 8,
+      cardRadius: HwRadius.control,
+      cardSpace: 6,
+      cardHoverEffect: HoverEffect.Highlight,
+      cardFocusable: true,
+      cardMargin: { right: HwSpace.md, bottom: HwSpace.md },
+      cardOnClick: (): void => {
+        this.accentDraft = '';
+        this.accentError = '';
+        this.showAccentSheet = true;
+      }
+    }) {
+      Column({ space: 6 }) {
+        Stack({ alignContent: Alignment.Center }) {
+          Circle()
+            .width(34)
+            .height(34)
+            .fill('#14000000')
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(18)
+            .fontColor([HwColor.textSecondary])
+        }
+        .width(34)
+        .height(34)
+
+        Text('自定义')
+          .fontFamily(this.appFontFamily('自定义'))
+          .fontWeight(this.appFontWeight())
+          .fontSize(12)
+          .fontColor(HwColor.textSecondary)
+          .maxLines(1)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+    }
+  }
+
+  /** 输入 RRGGBB 的弹窗（底部面板），沿用全站一致的沉浸光感材质 */
+  @Builder
+  accentInputSheet() {
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text('自定义主题色')
+            .fontFamily(this.appFontFamily('自定义主题色'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: (): void => {
+              this.showAccentSheet = false;
+            }
+          })
+        }
+        .width('100%')
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+
+        Column({ space: HwSpace.md }) {
+          Text('输入 6 位十六进制色值（RRGGBB），例如 1A2B3C')
+            .fontFamily(this.appFontFamily('输入 6 位十六进制色值（RRGGBB），例如 1A2B3C'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(12)
+            .fontColor(HwColor.textSecondary)
+            .width('100%')
+
+          Row({ space: HwSpace.sm }) {
+            TextInput({ text: this.accentDraft, placeholder: 'RRGGBB' })
+              .layoutWeight(1)
+              .height(44)
+              .fontSize(15)
+              .maxLength(7)
+              .backgroundColor(Color.Transparent)
+              .padding({ left: HwSpace.md, right: HwSpace.md })
+              .fontColor(HwColor.textPrimary)
+              .placeholderColor(HwColor.textSecondary)
+              .caretColor(this.accentOrPrimary())
+              .onChange((value: string) => {
+                this.accentDraft = value;
+                this.accentError = '';
+              })
+            // 实时预览：非法时回落到当前主题色，避免闪成透明
+            Circle()
+              .width(28)
+              .height(28)
+              .fill(normalizeAccentHex(this.accentDraft).length > 0
+                ? normalizeAccentHex(this.accentDraft) : this.currentAccent())
+          }
+          .width('100%')
+
+          if (this.accentError.length > 0) {
+            Text(this.accentError)
+              .fontFamily(this.appFontFamily(this.accentError))
+              .fontWeight(this.appFontWeight())
+              .fontSize(12)
+              .fontColor(HwColor.danger)
+              .width('100%')
+          }
+
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('添加到主题色', { type: ButtonType.Capsule, stateEffect: false })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontColor(HwColor.primary)
+              .backgroundColor(Color.Transparent)
+              .onClick((): void => {
+                this.addCustomAccent();
+              })
+          }
+        }
+        .width('100%')
+        .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: HwSpace.lg })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
   private applyFontSizeScale(): void {
     try {
       const appContext = (getContext(this) as common.UIAbilityContext).getApplicationContext();
@@ -391,6 +761,19 @@ struct AppearanceSettingsPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
+      // 自定义主题色输入弹窗：挂在零尺寸 Column 上，不影响布局
+      Column()
+        .width(0)
+        .height(0)
+        .bindSheet($$this.showAccentSheet, this.accentInputSheet(), {
+          height: SheetSize.MEDIUM,
+          dragBar: true,
+          showClose: false,
+          backgroundColor: Color.Transparent,
+          blurStyle: sheetBlurStyle(),
+        })
       AppBackground()
       Column() {
         Scroll() {
@@ -416,8 +799,31 @@ struct AppearanceSettingsPage {
                   .padding({ left: 4, right: 4 })
               }
 
+              // 深色模式：切换过就以开关为准，没切换过则跟随系统（启动时由 EntryAbility 决定初值）
+              MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
+                Column({ space: 4 }) {
+                  Text('深色模式')
+                    .fontFamily(this.appFontFamily('深色模式'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(15)
+                    .fontColor(HwColor.textPrimary)
+                  Text('关闭后固定使用浅色界面，不再跟随系统')
+                    .fontFamily(this.appFontFamily('关闭后固定使用浅色界面，不再跟随系统'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(12)
+                    .fontColor(HwColor.textSecondary)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.isDarkMode })
+                  .selectedColor(this.accentOrPrimary())
+                  .onChange((isOn: boolean) => {
+                    this.setDarkMode(isOn);
+                  })
+              }
+
               if (isApi26OrAbove()) {
-                Row({ space: 12 }) {
+                MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
                   Column({ space: 4 }) {
                     Text('全局沉浸光感')
                       .fontFamily(this.appFontFamily('全局沉浸光感'))
@@ -429,25 +835,66 @@ struct AppearanceSettingsPage {
                       .fontWeight(this.appFontWeight())
                       .fontSize(12)
                       .fontColor(HwColor.textSecondary)
+                    if (this.immersiveLightEnabled) {
+                      Text(materialDiagnostics())
+                        .fontFamily('HarmonyOS Sans')
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(11)
+                        .fontColor(HwColor.textSecondary)
+                        .maxLines(2)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    }
                   }
                   .alignItems(HorizontalAlign.Start)
                   .layoutWeight(1)
                   Toggle({ type: ToggleType.Switch, isOn: this.immersiveLightEnabled })
+                    .selectedColor(this.accentOrPrimary())
                     .onChange((isOn: boolean) => {
                       this.immersiveLightEnabled = isOn;
                       AppSettingsStore.setBoolean('immersiveLightEnabled', isOn);
                     })
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
             }
 
-            Row({ space: 12 }) {
+            // 主题色：预设 + 自定义 RRGGBB
+            MaterialCard({
+              cardPadding: HwSpace.lg,
+              cardRadius: HwRadius.card,
+              cardSpace: HwSpace.md,
+              cardAlignItems: ItemAlign.Start
+            }) {
+              Column({ space: 4 }) {
+                Text('主题色')
+                  .fontFamily(this.appFontFamily('主题色'))
+                  .fontWeight(this.appFontWeight())
+                  .fontSize(15)
+                  .fontColor(HwColor.textPrimary)
+                Text('影响开关、选中态、链接与高亮文字等全局配色')
+                  .fontFamily(this.appFontFamily('影响开关、选中态、链接与高亮文字等全局配色'))
+                  .fontWeight(this.appFontWeight())
+                  .fontSize(12)
+                  .fontColor(HwColor.textSecondary)
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+
+              // 色块统一走 MaterialCard：和首页卡片同一套沉浸光感载体，
+              // 换行排列——预设在前，用户新增的自定义色在后，末尾固定是「新增」按钮。
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(ACCENT_PRESETS, (preset: AccentPreset) => {
+                  this.accentSwatch(preset.key, preset.value, preset.label, this.accentKey === preset.key, false)
+                }, (preset: AccentPreset) => `preset_${preset.key}`)
+
+                ForEach(this.accentList, (hex: string) => {
+                  this.accentSwatch(hex, `#${hex}`, hex, this.isCustomSelected(hex), true)
+                }, (hex: string) => `custom_${hex}`)
+
+                this.addAccentSwatch()
+              }
+              .width('100%')
+            }
+
+            MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
               Column({ space: 4 }) {
                 Text('所有页面卡片从顶部开始排列')
                   .fontFamily(this.appFontFamily('所有页面卡片从顶部开始排列'))
@@ -463,20 +910,20 @@ struct AppearanceSettingsPage {
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
               Toggle({ type: ToggleType.Switch, isOn: this.cardsFromTop })
+                .selectedColor(this.accentOrPrimary())
                 .onChange((isOn: boolean) => {
                   this.cardsFromTop = isOn;
                   AppSettingsStore.setBoolean('cardsFromTop', isOn);
                 })
             }
-            .width('100%')
-            .padding(HwSpace.lg)
-            .borderRadius(HwRadius.card)
-            .backgroundColor(HwGlassCardColor.surface)
-            .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-            .border({ width: 1, color: HwGlassCardColor.border })
-            .clip(true)
 
-            Row({ space: 12 }) {
+            MaterialCard({
+              cardDirection: FlexDirection.Row,
+              cardPadding: HwSpace.lg,
+              cardRadius: HwRadius.card,
+              cardSpace: 12,
+              cardMenuItems: this.fontModeMenu()
+            }) {
               Column({ space: 4 }) {
                 Text('更换字体')
                     .fontFamily(this.appFontFamily('更换字体'))
@@ -494,18 +941,16 @@ struct AppearanceSettingsPage {
                 SymbolGlyph($r('sys.symbol.chevron_right'))
                   .fontSize(16)
                   .fontColor([HwColor.textSecondary])
-              }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .bindMenu(this.fontModeMenu())
+            }
 
               if (this.fontMode === 'custom') {
-                Row({ space: 12 }) {
+                MaterialCard({
+                  cardDirection: FlexDirection.Row,
+                  cardPadding: HwSpace.lg,
+                  cardRadius: HwRadius.card,
+                  cardSpace: 12,
+                  cardMenuItems: this.fontFamilyMenu(true)
+                }) {
                   Column({ space: 4 }) {
                     Text('英文/数字字体')
                       .fontFamily(this.appFontFamily('英文/数字字体'))
@@ -524,16 +969,14 @@ struct AppearanceSettingsPage {
                     .fontSize(16)
                     .fontColor([HwColor.textSecondary])
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
-                .bindMenu(this.fontFamilyMenu(true))
 
-                Row({ space: 12 }) {
+                MaterialCard({
+                  cardDirection: FlexDirection.Row,
+                  cardPadding: HwSpace.lg,
+                  cardRadius: HwRadius.card,
+                  cardSpace: 12,
+                  cardMenuItems: this.fontFamilyMenu(false)
+                }) {
                   Column({ space: 4 }) {
                     Text('中文字体')
                       .fontFamily(this.appFontFamily('中文字体'))
@@ -552,16 +995,16 @@ struct AppearanceSettingsPage {
                     .fontSize(16)
                     .fontColor([HwColor.textSecondary])
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
-                .bindMenu(this.fontFamilyMenu(false))
 
-                Row({ space: 12 }) {
+                MaterialCard({
+                  cardDirection: FlexDirection.Row,
+                  cardPadding: HwSpace.lg,
+                  cardRadius: HwRadius.card,
+                  cardSpace: 12,
+                  cardOnClick: () => {
+                    this.uploadFont();
+                  }
+                }) {
                   Column({ space: 4 }) {
                     Text('上传字体')
                       .fontFamily(this.appFontFamily('上传字体'))
@@ -580,20 +1023,18 @@ struct AppearanceSettingsPage {
                     .fontSize(18)
                     .fontColor([HwColor.primary])
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
-                .onClick(() => {
-                  this.uploadFont();
-                })
               }
 
               if (this.customFonts.length > 0) {
-                Row({ space: 12 }) {
+                MaterialCard({
+                  cardDirection: FlexDirection.Row,
+                  cardPadding: HwSpace.lg,
+                  cardRadius: HwRadius.card,
+                  cardSpace: 12,
+                  cardOnClick: () => {
+                    router.pushUrl({ url: 'pages/FontManagePage' });
+                  }
+                }) {
                   Column({ space: 4 }) {
                     Text('管理字体')
                       .fontFamily(this.appFontFamily('管理字体'))
@@ -612,19 +1053,15 @@ struct AppearanceSettingsPage {
                     .fontSize(16)
                     .fontColor([HwColor.textSecondary])
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
-                .onClick(() => {
-                  router.pushUrl({ url: 'pages/FontManagePage' });
-                })
               }
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardDirection: FlexDirection.Row,
+                cardPadding: HwSpace.lg,
+                cardRadius: HwRadius.card,
+                cardSpace: 12,
+                cardMenuItems: this.fontSizeModeMenu()
+              }) {
                 Column({ space: 4 }) {
                   Text('字体大小')
                     .fontFamily(this.appFontFamily('字体大小'))
@@ -643,17 +1080,9 @@ struct AppearanceSettingsPage {
                   .fontSize(16)
                   .fontColor([HwColor.textSecondary])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .bindMenu(this.fontSizeModeMenu())
 
               if (this.fontSizeMode === 'custom') {
-                Row({ space: 12 }) {
+                MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
                   Text('字体大小')
                     .fontFamily(this.appFontFamily('字体大小'))
                     .fontWeight(this.appFontWeight())
@@ -677,16 +1106,15 @@ struct AppearanceSettingsPage {
                     .fontSize(14)
                     .fontColor(HwColor.textSecondary)
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
               }
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardDirection: FlexDirection.Row,
+                cardPadding: HwSpace.lg,
+                cardRadius: HwRadius.card,
+                cardSpace: 12,
+                cardMenuItems: this.fontWeightModeMenu()
+              }) {
                 Column({ space: 4 }) {
                   Text('字体粗细')
                     .fontFamily(this.appFontFamily('字体粗细'))
@@ -705,17 +1133,9 @@ struct AppearanceSettingsPage {
                   .fontSize(16)
                   .fontColor([HwColor.textSecondary])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .bindMenu(this.fontWeightModeMenu())
 
               if (this.fontWeightMode === 'custom') {
-                Row({ space: 12 }) {
+                MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
                   Text('字体粗细')
                     .fontFamily(this.appFontFamily('字体粗细'))
                     .fontWeight(this.appFontWeight())
@@ -739,16 +1159,19 @@ struct AppearanceSettingsPage {
                     .fontSize(14)
                     .fontColor(HwColor.textSecondary)
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
               }
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardDirection: FlexDirection.Row,
+                cardPadding: HwSpace.lg,
+                cardRadius: HwRadius.card,
+                cardSpace: 12,
+                cardEnabled: !this.autoMultiColumn,
+                cardOpacity: this.autoMultiColumn ? 0.4 : 1,
+                cardOnClick: () => {
+                  this.pickBackgroundImage();
+                }
+              }) {
                 Column({ space: 4 }) {
                   Text('更换背景')
                     .fontFamily(this.appFontFamily('更换背景'))
@@ -771,20 +1194,18 @@ struct AppearanceSettingsPage {
                   .fontSize(18)
                   .fontColor([HwColor.textSecondary])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .enabled(!this.autoMultiColumn)
-              .opacity(this.autoMultiColumn ? 0.4 : 1)
-              .onClick(() => {
-                this.pickBackgroundImage();
-              })
 
-              Row({ space: 12 }) {
+              MaterialCard({
+                cardDirection: FlexDirection.Row,
+                cardPadding: HwSpace.lg,
+                cardRadius: HwRadius.card,
+                cardSpace: 12,
+                cardEnabled: !this.autoMultiColumn,
+                cardOpacity: this.autoMultiColumn ? 0.4 : 1,
+                cardOnClick: () => {
+                  this.showClearBackgroundDialog();
+                }
+              }) {
                 Text('清空背景')
                   .fontFamily(this.appFontFamily('清空背景'))
                   .fontWeight(this.appFontWeight())
@@ -795,18 +1216,6 @@ struct AppearanceSettingsPage {
                   .fontSize(18)
                   .fontColor([HwColor.danger])
               }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwGlassCardColor.surface)
-              .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-              .border({ width: 1, color: HwGlassCardColor.border })
-              .clip(true)
-              .enabled(!this.autoMultiColumn)
-              .opacity(this.autoMultiColumn ? 0.4 : 1)
-              .onClick(() => {
-                this.showClearBackgroundDialog();
-              })
             }
             .width('100%')
             .padding({ left: HwSpace.lg, right: HwSpace.lg, top: HwSpace.lg, bottom: HwSpace.xl })

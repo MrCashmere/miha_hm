@@ -20,8 +20,11 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+// 卡片已全部改为 MaterialCard 承载光感，旧的修饰器不再需要；
+// sheet 仍走同一套系统材质，所以保留这两个。
+import { sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
+import { MaterialCard, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -46,6 +49,8 @@ const INFO_REFRESH_OPTIONS: InfoRefreshOption[] = [
 @Component
 struct SettingsPage {
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontMode') fontMode: string = 'system';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
@@ -94,10 +99,26 @@ struct SettingsPage {
   @StorageLink('sortDevicesByRoom') sortDevicesByRoom: boolean = false;
   @StorageLink('defaultHomeTab') defaultHomeTab: string = 'home';
   @StorageLink('infoRefreshInterval') infoRefreshInterval: string = '30';
+  /** 首页概览区开关：关闭后首页只显示设备列表 */
+  @StorageLink('showOverviewCards') showOverviewCards: boolean = true;
   @State clearMessage: string = '';
   @State showDefaultTabSheet: boolean = false;
   @State showRefreshIntervalSheet: boolean = false;
   @State showExcludeSheet: boolean = false;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
+
+  /**
+   * 开关的选中色。
+   * 读 accentColor 建立依赖：直接写 HwColor.primary 在切主题色后不会重新求值，
+   * 开关会停留在旧色。
+   */
+  private accentOrPrimary(): string {
+    return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('设置页');
@@ -129,6 +150,20 @@ struct SettingsPage {
     AppSettingsStore.delete('backgroundImage');
     AppSettingsStore.delete('defaultHomeTab');
     AppSettingsStore.delete('infoRefreshInterval');
+    // 外观类设置也要清空，否则「已清空所有记住的设置项」之后主题/字体/光感仍是旧值
+    AppSettingsStore.delete('showOverviewCards');
+    AppSettingsStore.delete('fontMode');
+    AppSettingsStore.delete('fontFamilyEn');
+    AppSettingsStore.delete('fontFamilyZh');
+    AppSettingsStore.delete('fontSizeMode');
+    AppSettingsStore.delete('fontSizeValue');
+    AppSettingsStore.delete('fontWeightMode');
+    AppSettingsStore.delete('fontWeightValue');
+    AppSettingsStore.delete('immersiveLightEnabled');
+    AppSettingsStore.delete('cardsFromTop');
+    AppSettingsStore.delete('darkModeEnabled');
+    AppSettingsStore.delete('accentKey');
+    AppSettingsStore.delete('accentCustom');
     AppStorage.setOrCreate('hideOfflineDevices', false);
     AppStorage.setOrCreate('selectedHomeId', '');
     AppStorage.setOrCreate('selectedHomeName', '');
@@ -142,6 +177,21 @@ struct SettingsPage {
     AppStorage.setOrCreate('backgroundImage', '');
     AppStorage.setOrCreate('defaultHomeTab', 'home');
     AppStorage.setOrCreate('infoRefreshInterval', '30');
+    AppStorage.setOrCreate('showOverviewCards', true);
+    AppStorage.setOrCreate('fontMode', 'system');
+    AppStorage.setOrCreate('fontFamilyEn', 'system');
+    AppStorage.setOrCreate('fontFamilyZh', 'system');
+    AppStorage.setOrCreate('fontSizeMode', 'system');
+    AppStorage.setOrCreate('fontSizeValue', 16);
+    AppStorage.setOrCreate('fontWeightMode', 'system');
+    AppStorage.setOrCreate('fontWeightValue', 400);
+    AppStorage.setOrCreate('immersiveLightEnabled', true);
+    AppStorage.setOrCreate('cardsFromTop', true);
+    AppStorage.setOrCreate('darkModeEnabled', false);
+    AppStorage.setOrCreate('accentKey', 'harmony');
+    AppStorage.setOrCreate('accentCustom', '');
+    AppStorage.setOrCreate('accentColor', '#0A59F7');
+    AppStorage.setOrCreate('isDarkMode', false);
     this.hideOfflineDevices = false;
     this.dualColumnMode = false;
     this.autoMultiColumn = false;
@@ -238,117 +288,39 @@ struct SettingsPage {
 
   @Builder
   defaultTabSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text('打开应用时默认展示')
-          .fontFamily(this.appFontFamily('打开应用时默认展示'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: () => {
-            this.showDefaultTabSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      Column({ space: 10 }) {
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
         Row({ space: 12 }) {
-          Text('首页')
-            .fontFamily(this.appFontFamily('首页'))
+          Text('打开应用时默认展示')
+            .fontFamily(this.appFontFamily('打开应用时默认展示'))
             .fontWeight(this.appFontWeight())
-            .fontSize(15)
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
             .fontColor(HwColor.textPrimary)
             .layoutWeight(1)
-          if (this.defaultHomeTab === 'home') {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(18)
-              .fontColor([HwColor.primary])
-          }
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: () => {
+              this.showDefaultTabSheet = false;
+            }
+          })
         }
         .width('100%')
-        .padding(HwSpace.md)
-        .borderRadius(HwRadius.control)
-        .backgroundColor(HwColor.surface)
-        .onClick(() => {
-          this.defaultHomeTab = 'home';
-          AppSettingsStore.setString('defaultHomeTab', 'home');
-          this.showDefaultTabSheet = false;
-        })
-        Row({ space: 12 }) {
-          Text('信息')
-            .fontFamily(this.appFontFamily('信息'))
-            .fontWeight(this.appFontWeight())
-            .fontSize(15)
-            .fontColor(HwColor.textPrimary)
-            .layoutWeight(1)
-          if (this.defaultHomeTab === 'info') {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(18)
-              .fontColor([HwColor.primary])
-          }
-        }
-        .width('100%')
-        .padding(HwSpace.md)
-        .borderRadius(HwRadius.control)
-        .backgroundColor(HwColor.surface)
-        .onClick(() => {
-          this.defaultHomeTab = 'info';
-          AppSettingsStore.setString('defaultHomeTab', 'info');
-          this.showDefaultTabSheet = false;
-        })
-      }
-      .width('100%')
-      .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
-      .margin({ top: 12 })
-    }
-    .width('100%')
-  }
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
 
-  @Builder
-  refreshIntervalSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text('信息页数据更新频率')
-          .fontFamily(this.appFontFamily('信息页数据更新频率'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: () => {
-            this.showRefreshIntervalSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      Column({ space: 10 }) {
-        ForEach(INFO_REFRESH_OPTIONS, (option: InfoRefreshOption) => {
+        Column({ space: 10 }) {
           Row({ space: 12 }) {
-            Text(option.label)
-              .fontFamily(this.appFontFamily(option.label))
+            Text('首页')
+              .fontFamily(this.appFontFamily('首页'))
               .fontWeight(this.appFontWeight())
               .fontSize(15)
               .fontColor(HwColor.textPrimary)
               .layoutWeight(1)
-            if (this.infoRefreshInterval === option.seconds) {
+            if (this.defaultHomeTab === 'home') {
               SymbolGlyph($r('sys.symbol.checkmark'))
                 .fontSize(18)
                 .fontColor([HwColor.primary])
@@ -359,17 +331,99 @@ struct SettingsPage {
           .borderRadius(HwRadius.control)
           .backgroundColor(HwColor.surface)
           .onClick(() => {
-            this.infoRefreshInterval = option.seconds;
-            AppSettingsStore.setString('infoRefreshInterval', option.seconds);
-            this.showRefreshIntervalSheet = false;
+            this.defaultHomeTab = 'home';
+            AppSettingsStore.setString('defaultHomeTab', 'home');
+            this.showDefaultTabSheet = false;
           })
-        }, (option: InfoRefreshOption) => option.seconds)
+          Row({ space: 12 }) {
+            Text('信息')
+              .fontFamily(this.appFontFamily('信息'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(15)
+              .fontColor(HwColor.textPrimary)
+              .layoutWeight(1)
+            if (this.defaultHomeTab === 'info') {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(18)
+                .fontColor([HwColor.primary])
+            }
+          }
+          .width('100%')
+          .padding(HwSpace.md)
+          .borderRadius(HwRadius.control)
+          .backgroundColor(HwColor.surface)
+          .onClick(() => {
+            this.defaultHomeTab = 'info';
+            AppSettingsStore.setString('defaultHomeTab', 'info');
+            this.showDefaultTabSheet = false;
+          })
+        }
+        .width('100%')
+        .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
+        .margin({ top: 12 })
       }
       .width('100%')
-      .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
-      .margin({ top: 12 })
     }
-    .width('100%')
+  }
+
+  @Builder
+  refreshIntervalSheet() {
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text('信息页数据更新频率')
+            .fontFamily(this.appFontFamily('信息页数据更新频率'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: () => {
+              this.showRefreshIntervalSheet = false;
+            }
+          })
+        }
+        .width('100%')
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+
+        Column({ space: 10 }) {
+          ForEach(INFO_REFRESH_OPTIONS, (option: InfoRefreshOption) => {
+            Row({ space: 12 }) {
+              Text(option.label)
+                .fontFamily(this.appFontFamily(option.label))
+                .fontWeight(this.appFontWeight())
+                .fontSize(15)
+                .fontColor(HwColor.textPrimary)
+                .layoutWeight(1)
+              if (this.infoRefreshInterval === option.seconds) {
+                SymbolGlyph($r('sys.symbol.checkmark'))
+                  .fontSize(18)
+                  .fontColor([HwColor.primary])
+              }
+            }
+            .width('100%')
+            .padding(HwSpace.md)
+            .borderRadius(HwRadius.control)
+            .backgroundColor(HwColor.surface)
+            .onClick(() => {
+              this.infoRefreshInterval = option.seconds;
+              AppSettingsStore.setString('infoRefreshInterval', option.seconds);
+              this.showRefreshIntervalSheet = false;
+            })
+          }, (option: InfoRefreshOption) => option.seconds)
+        }
+        .width('100%')
+        .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
+        .margin({ top: 12 })
+      }
+      .width('100%')
+    }
   }
 
   @Builder
@@ -397,7 +451,7 @@ struct SettingsPage {
       .layoutWeight(1)
       Checkbox()
         .select(this.isDeviceExcluded(option.did))
-        .selectedColor(HwColor.primary)
+        .selectedColor(this.accentOrPrimary())
         .onChange((checked: boolean) => {
           this.setDeviceExcluded(option.did, checked);
         })
@@ -413,68 +467,72 @@ struct SettingsPage {
 
   @Builder
   excludeSettingSheet() {
-    Column({ space: 0 }) {
-      Row({ space: 12 }) {
-        Text('信息页排除设备')
-          .fontFamily(this.appFontFamily('信息页排除设备'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        IconCircleButton({
-          symbol: $r('sys.symbol.xmark'),
-          buttonSize: 36,
-          iconSize: 18,
-          onAction: () => {
-            this.showExcludeSheet = false;
-          }
-        })
-      }
-      .width('100%')
-      .height(56)
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: HwSpace.lg, right: HwSpace.lg })
-
-      Text('勾选后该设备的数据不再计入信息页')
-        .fontFamily(this.appFontFamily('勾选后该设备的数据不再计入信息页'))
-        .fontWeight(this.appFontWeight())
-        .fontSize(12)
-        .fontColor(HwColor.textSecondary)
-        .width('100%')
-        .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 8 })
-
-      if (this.infoDeviceOptions.length === 0) {
-        Text('暂无设备，请先返回首页加载设备')
-          .fontFamily(this.appFontFamily('暂无设备，请先返回首页加载设备'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(14)
-          .fontColor(HwColor.textSecondary)
-          .padding({ top: 24, bottom: 24 })
-      } else {
-        Scroll() {
-          Column({ space: 8 }) {
-            ForEach(this.infoDeviceOptions, (option: InfoExcludeOption) => {
-              this.excludeSettingRow(option)
-            }, (option: InfoExcludeOption) => option.did)
-          }
-          .width('100%')
-          .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
-          .margin({ top: 12 })
+    MaterialSheetPanel() {
+      Column({ space: 0 }) {
+        Row({ space: 12 }) {
+          Text('信息页排除设备')
+            .fontFamily(this.appFontFamily('信息页排除设备'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          IconCircleButton({
+            symbol: $r('sys.symbol.xmark'),
+            buttonSize: 36,
+            iconSize: 18,
+            onAction: () => {
+              this.showExcludeSheet = false;
+            }
+          })
         }
         .width('100%')
-        .layoutWeight(1)
-        .scrollBar(BarState.Off)
+        .height(56)
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: HwSpace.lg, right: HwSpace.lg })
+
+        Text('勾选后该设备的数据不再计入信息页')
+          .fontFamily(this.appFontFamily('勾选后该设备的数据不再计入信息页'))
+          .fontWeight(this.appFontWeight())
+          .fontSize(12)
+          .fontColor(HwColor.textSecondary)
+          .width('100%')
+          .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 8 })
+
+        if (this.infoDeviceOptions.length === 0) {
+          Text('暂无设备，请先返回首页加载设备')
+            .fontFamily(this.appFontFamily('暂无设备，请先返回首页加载设备'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(14)
+            .fontColor(HwColor.textSecondary)
+            .padding({ top: 24, bottom: 24 })
+        } else {
+          Scroll() {
+            Column({ space: 8 }) {
+              ForEach(this.infoDeviceOptions, (option: InfoExcludeOption) => {
+                this.excludeSettingRow(option)
+              }, (option: InfoExcludeOption) => option.did)
+            }
+            .width('100%')
+            .padding({ left: HwSpace.lg, right: HwSpace.lg, bottom: 24 })
+            .margin({ top: 12 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
+        }
       }
+      .width('100%')
+      .height('100%')
     }
-    .width('100%')
-    .height('100%')
   }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Scroll() {
@@ -491,7 +549,12 @@ struct SettingsPage {
             .padding({ left: 4, right: 4 })
         }
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
           Column({ space: 4 }) {
             Text('隐藏离线设备')
               .fontFamily(this.appFontFamily('隐藏离线设备'))
@@ -507,20 +570,19 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.hideOfflineDevices })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.hideOfflineDevices = isOn;
               AppSettingsStore.setBoolean('hideOfflineDevices', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
           Column({ space: 4 }) {
             Text('首页设备按照房间(本地)排序')
               .fontFamily(this.appFontFamily('首页设备按照房间(本地)排序'))
@@ -536,20 +598,20 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.sortDevicesByRoom })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.sortDevicesByRoom = isOn;
               AppSettingsStore.setBoolean('sortDevicesByRoom', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card,
+          cardOpacity: this.autoMultiColumn ? 0.4 : 1
+        }) {
           Column({ space: 4 }) {
             Text('双列模式')
               .fontFamily(this.appFontFamily('双列模式'))
@@ -565,22 +627,21 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.dualColumnMode })
+            .selectedColor(this.accentOrPrimary())
             .enabled(!this.autoMultiColumn)
             .onChange((isOn: boolean) => {
               this.dualColumnMode = isOn;
               AppSettingsStore.setBoolean('dualColumnMode', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .opacity(this.autoMultiColumn ? 0.4 : 1)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card,
+          cardOpacity: this.pcLayoutEnabled ? 0.4 : 1
+        }) {
           Column({ space: 4 }) {
             Text('主页页面平滑切换')
               .fontFamily(this.appFontFamily('主页页面平滑切换'))
@@ -596,22 +657,20 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.homeSmoothSwitch })
+            .selectedColor(this.accentOrPrimary())
             .enabled(!this.pcLayoutEnabled)
             .onChange((isOn: boolean) => {
               this.homeSmoothSwitch = isOn;
               AppSettingsStore.setBoolean('homeSmoothSwitch', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .opacity(this.pcLayoutEnabled ? 0.4 : 1)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
           Column({ space: 4 }) {
             Text('温度以华氏度℉')
               .fontFamily(this.appFontFamily('温度以华氏度℉'))
@@ -627,20 +686,19 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.temperatureFahrenheit })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.temperatureFahrenheit = isOn;
               AppSettingsStore.setBoolean('temperatureFahrenheit', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
           Column({ space: 4 }) {
             Text('温度额外显示单位')
               .fontFamily(this.appFontFamily('温度额外显示单位'))
@@ -656,21 +714,21 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.temperatureShowUnit })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.temperatureShowUnit = isOn;
               AppSettingsStore.setBoolean('temperatureShowUnit', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
 
         if (this.isLargeScreen) {
-          Row({ space: 12 }) {
+          MaterialCard({
+            cardDirection: FlexDirection.Row,
+            cardSpace: 12,
+            cardPadding: HwSpace.lg,
+            cardRadius: HwRadius.card,
+            cardOpacity: this.pcLayoutEnabled ? 0.4 : 1
+          }) {
             Column({ space: 4 }) {
               Text('自动多栏')
                 .fontFamily(this.appFontFamily('自动多栏'))
@@ -686,21 +744,19 @@ struct SettingsPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
             Toggle({ type: ToggleType.Switch, isOn: this.autoMultiColumn })
+              .selectedColor(this.accentOrPrimary())
               .enabled(!this.pcLayoutEnabled)
               .onChange((isOn: boolean) => {
                 this.setAutoMultiColumn(isOn);
               })
           }
-          .width('100%')
-          .padding(HwSpace.lg)
-          .borderRadius(HwRadius.card)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .clip(true)
-          .opacity(this.pcLayoutEnabled ? 0.4 : 1)
 
-          Row({ space: 12 }) {
+          MaterialCard({
+            cardDirection: FlexDirection.Row,
+            cardSpace: 12,
+            cardPadding: HwSpace.lg,
+            cardRadius: HwRadius.card
+          }) {
             Column({ space: 4 }) {
               Text('侧边导航布局')
                 .fontFamily(this.appFontFamily('侧边导航布局'))
@@ -716,6 +772,7 @@ struct SettingsPage {
             .alignItems(HorizontalAlign.Start)
             .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.pcLayoutEnabled })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.pcLayoutEnabled = isOn;
               AppSettingsStore.setBoolean('pcLayoutEnabled', isOn);
@@ -728,131 +785,108 @@ struct SettingsPage {
               }
             })
           }
-          .width('100%')
-          .padding(HwSpace.lg)
-          .borderRadius(HwRadius.card)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .clip(true)
         }
 
-        Row({ space: 12 }) {
-          Column({ space: 4 }) {
-            Text('默认打开页面')
-              .fontFamily(this.appFontFamily('默认打开页面'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(15)
-              .fontColor(HwColor.textPrimary)
-            Text(this.defaultHomeTab === 'info' ? '信息' : '首页')
-              .fontFamily(this.appFontFamily(this.defaultHomeTab === 'info' ? '信息' : '首页'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(12)
-              .fontColor(HwColor.textSecondary)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([HwColor.textSecondary])
-        }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.showDefaultTabSheet = true;
-        })
-        .bindSheet($$this.showDefaultTabSheet, this.defaultTabSheet(), {
-          height: SheetSize.MEDIUM,
-          dragBar: true,
-          showClose: false,
-          systemMaterial: sheetSystemMaterial(),
-          blurStyle: sheetBlurStyle(),
-        })
-
-        Row({ space: 12 }) {
-          Column({ space: 4 }) {
-            Text('信息页数据更新频率')
-              .fontFamily(this.appFontFamily('信息页数据更新频率'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(15)
-              .fontColor(HwColor.textPrimary)
-            Text(this.refreshIntervalLabel())
-              .fontFamily(this.appFontFamily(this.refreshIntervalLabel()))
-              .fontWeight(this.appFontWeight())
-              .fontSize(12)
-              .fontColor(HwColor.textSecondary)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([HwColor.textSecondary])
+        Column() {
+                  MaterialCard({
+                    cardDirection: FlexDirection.Row,
+                    cardSpace: 12,
+                    cardPadding: HwSpace.lg,
+                    cardRadius: HwRadius.card,
+                    cardOnClick: (): void => { this.showDefaultTabSheet = true; }
+                  }) {
+                    Column({ space: 4 }) {
+                      Text('默认打开页面')
+                        .fontFamily(this.appFontFamily('默认打开页面'))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(15)
+                        .fontColor(HwColor.textPrimary)
+                      Text(this.defaultHomeTab === 'info' ? '信息' : '首页')
+                        .fontFamily(this.appFontFamily(this.defaultHomeTab === 'info' ? '信息' : '首页'))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(12)
+                        .fontColor(HwColor.textSecondary)
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(16)
+                      .fontColor([HwColor.textSecondary])
+                  }
         }
         .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.showRefreshIntervalSheet = true;
-        })
-        .bindSheet($$this.showRefreshIntervalSheet, this.refreshIntervalSheet(), {
-          height: SheetSize.MEDIUM,
-          dragBar: true,
-          showClose: false,
-          systemMaterial: sheetSystemMaterial(),
-          blurStyle: sheetBlurStyle(),
-        })
+        .bindSheet($$this.showDefaultTabSheet, this.defaultTabSheet(), { height: SheetSize.MEDIUM, dragBar: true, showClose: false, backgroundColor: Color.Transparent, blurStyle: sheetBlurStyle(), })
 
-        Row({ space: 12 }) {
-          Column({ space: 4 }) {
-            Text('信息页排除设备')
-              .fontFamily(this.appFontFamily('信息页排除设备'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(15)
-              .fontColor(HwColor.textPrimary)
-            Text(this.infoExcludedDevices.length > 0
-              ? `已排除 ${this.infoExcludedDevices.length} 台设备`
-              : '未排除设备')
-              .fontFamily(this.appFontFamily(this.infoExcludedDevices.length > 0
-              ? `已排除 ${this.infoExcludedDevices.length} 台设备`
-              : '未排除设备'))
-              .fontWeight(this.appFontWeight())
-              .fontSize(12)
-              .fontColor(HwColor.textSecondary)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
-            .fontColor([HwColor.textSecondary])
+        Column() {
+                  MaterialCard({
+                    cardDirection: FlexDirection.Row,
+                    cardSpace: 12,
+                    cardPadding: HwSpace.lg,
+                    cardRadius: HwRadius.card,
+                    cardOnClick: (): void => { this.showRefreshIntervalSheet = true; }
+                  }) {
+                    Column({ space: 4 }) {
+                      Text('信息页数据更新频率')
+                        .fontFamily(this.appFontFamily('信息页数据更新频率'))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(15)
+                        .fontColor(HwColor.textPrimary)
+                      Text(this.refreshIntervalLabel())
+                        .fontFamily(this.appFontFamily(this.refreshIntervalLabel()))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(12)
+                        .fontColor(HwColor.textSecondary)
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(16)
+                      .fontColor([HwColor.textSecondary])
+                  }
         }
         .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.showExcludeSheet = true;
-        })
-        .bindSheet($$this.showExcludeSheet, this.excludeSettingSheet(), {
-          height: SheetSize.MEDIUM,
-          dragBar: true,
-          showClose: false,
-          systemMaterial: sheetSystemMaterial(),
-          blurStyle: sheetBlurStyle(),
-        })
+        .bindSheet($$this.showRefreshIntervalSheet, this.refreshIntervalSheet(), { height: SheetSize.MEDIUM, dragBar: true, showClose: false, backgroundColor: Color.Transparent, blurStyle: sheetBlurStyle(), })
 
-        Row({ space: 12 }) {
+        Column() {
+                  MaterialCard({
+                    cardDirection: FlexDirection.Row,
+                    cardSpace: 12,
+                    cardPadding: HwSpace.lg,
+                    cardRadius: HwRadius.card,
+                    cardOnClick: (): void => { this.showExcludeSheet = true; }
+                  }) {
+                    Column({ space: 4 }) {
+                      Text('信息页排除设备')
+                        .fontFamily(this.appFontFamily('信息页排除设备'))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(15)
+                        .fontColor(HwColor.textPrimary)
+                      Text(this.infoExcludedDevices.length > 0
+                        ? `已排除 ${this.infoExcludedDevices.length} 台设备`
+                        : '未排除设备')
+                        .fontFamily(this.appFontFamily(this.infoExcludedDevices.length > 0
+                        ? `已排除 ${this.infoExcludedDevices.length} 台设备`
+                        : '未排除设备'))
+                        .fontWeight(this.appFontWeight())
+                        .fontSize(12)
+                        .fontColor(HwColor.textSecondary)
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(16)
+                      .fontColor([HwColor.textSecondary])
+                  }
+        }
+        .width('100%')
+        .bindSheet($$this.showExcludeSheet, this.excludeSettingSheet(), { height: SheetSize.MEDIUM, dragBar: true, showClose: false, backgroundColor: Color.Transparent, blurStyle: sheetBlurStyle(), })
+
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
           Column({ space: 4 }) {
             Text('信息页显示更多内容')
               .fontFamily(this.appFontFamily('信息页显示更多内容'))
@@ -868,20 +902,20 @@ struct SettingsPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.infoShowMoreContent })
+            .selectedColor(this.accentOrPrimary())
             .onChange((isOn: boolean) => {
               this.infoShowMoreContent = isOn;
               AppSettingsStore.setBoolean('infoShowMoreContent', isOn);
             })
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card,
+          cardOnClick: (): void => { this.openAppearanceSettings(); }
+        }) {
           Column({ space: 4 }) {
             Text('外观设置')
               .fontFamily(this.appFontFamily('外观设置'))
@@ -900,18 +934,14 @@ struct SettingsPage {
             .fontSize(16)
             .fontColor([HwColor.textSecondary])
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.openAppearanceSettings();
-        })
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card,
+          cardOnClick: (): void => { this.openBackupRestore(); }
+        }) {
           Column({ space: 4 }) {
             Text('备份与恢复')
               .fontFamily(this.appFontFamily('备份与恢复'))
@@ -930,18 +960,14 @@ struct SettingsPage {
             .fontSize(16)
             .fontColor([HwColor.textSecondary])
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.openBackupRestore();
-        })
 
-        Row({ space: 12 }) {
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card,
+          cardOnClick: (): void => { this.showClearAllDialog(); }
+        }) {
           Text('清空所有记住的设置项')
             .fontFamily(this.appFontFamily('清空所有记住的设置项'))
             .fontWeight(this.appFontWeight())
@@ -952,16 +978,6 @@ struct SettingsPage {
             .fontSize(18)
             .fontColor([HwColor.danger])
         }
-        .width('100%')
-        .padding(HwSpace.lg)
-        .borderRadius(HwRadius.card)
-        .backgroundColor(HwGlassCardColor.surface)
-        .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-        .border({ width: 1, color: HwGlassCardColor.border })
-        .clip(true)
-        .onClick(() => {
-          this.showClearAllDialog();
-        })
             }
             .width('100%')
             .constraintSize({

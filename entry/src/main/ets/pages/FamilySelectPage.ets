@@ -22,7 +22,8 @@
 import { router } from '@kit.ArkUI';
 import { XiaomiHome, ALL_HOMES_ID, ALL_HOMES_NAME } from '../models/XiaomiHomeModels';
 import { xiaomiDataService } from '../services/XiaomiDataService';
-import { HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -32,6 +33,8 @@ import { FeedbackLogService } from '../services/FeedbackLogService';
 @Component
 struct FamilySelectPage {
   @StorageLink('fontMode') fontMode: string = 'system';
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
   @StorageLink('fontFamilyZh') fontFamilyZh: string = 'system';
 
@@ -67,6 +70,11 @@ struct FamilySelectPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
+  }
 
   aboutToAppear(): void {
     FeedbackLogService.setCurrentPage('选择家庭页');
@@ -105,6 +113,8 @@ struct FamilySelectPage {
 
   build() {
     Stack() {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Row() {

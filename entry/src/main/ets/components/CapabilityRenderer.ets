@@ -25,6 +25,7 @@ import {
   MIoTSpecService
 } from '../models/MIotSpecModels';
 import { FeedbackLogService } from '../services/FeedbackLogService';
+import { HwColor } from '../utils/DesignTokens';
 
 const MIOT_TEXT_DICTIONARY: Record<string, string> = {
   'switch status': '开关',
@@ -70,6 +71,32 @@ const MIOT_TEXT_DICTIONARY: Record<string, string> = {
   'buzzer': '提示音',
   'status': '状态',
   'device status': '设备状态',
+  'standby': '待机',
+  'device fault': '设备故障',
+  'fault': '故障',
+  'fault code': '故障码',
+  'error code': '错误码',
+  'working state': '工作状态',
+  'work state': '工作状态',
+  'lock state': '锁定状态',
+  'lock': '锁定',
+  'unlock': '解锁',
+  'open': '打开',
+  'close': '关闭',
+  'curtain': '窗帘',
+  'curtain level': '开合度',
+  'open level': '开合度',
+  'target humidity': '目标湿度',
+  'water level': '水位',
+  'particle': '颗粒物',
+  'particulate matter': '颗粒物',
+  'tvoc': 'TVOC',
+  'tvoc density': 'TVOC 浓度',
+  'aqi': '空气质量指数',
+  'iaq': '室内空气质量',
+  'air quality index': '空气质量指数',
+  'co2': 'CO2',
+  'target power': '目标功率',
   'work mode': '工作模式',
   'air quality': '空气质量',
   'pm2.5 density': 'PM2.5 浓度',
@@ -162,8 +189,6 @@ const MIOT_TEXT_DICTIONARY: Record<string, string> = {
   'pair': '配对',
   'connect': '连接',
   'disconnect': '断开',
-  'open': '打开',
-  'close': '关闭',
   'up': '上升',
   'down': '下降',
   'direction': '方向',
@@ -178,10 +203,7 @@ const MIOT_TEXT_DICTIONARY: Record<string, string> = {
   'backward': '快退',
   'shuffle': '随机播放',
   'repeat': '循环',
-  'standby': '待机',
   'wake': '唤醒',
-  'lock': '锁定',
-  'unlock': '解锁',
   'voice': '语音',
   'media': '媒体',
   'humidify': '加湿',
@@ -191,10 +213,40 @@ const MIOT_TEXT_DICTIONARY: Record<string, string> = {
   'anion': '负离子',
   'plasma': '等离子',
   'uv': '紫外线',
-  'filter': '滤芯'
+    'filter': '滤芯',
+    // 设备通用状态枚举补录
+    'idle': '空闲',
+  'busy': '繁忙',
+  'running': '运行中',
+  'stopped': '已停止',
+  'opened': '已打开',
+  'opening': '打开中',
+  'closed': '已关闭',
+  'closing': '关闭中',
+  'on-going': '进行中',
+  'unknown': '未知',
+  'none': '无',
+  'default': '默认',
+  'silent': '静音模式',
+  'dnd': '勿扰',
+  'away': '离家',
+  'home': '在家',
+  'vacation': '度假',
+  'access mode': '接入方式',
+  'wifi service set identifier': 'WiFi 配置',
+  'dhcp server mac adress': 'DHCP 服务器 MAC 地址',
+  'wireless 5 g': '无线 5G',
+  'wireless 5g': '无线 5G',
+  'wireless 2 g': '无线 2G',
+  'wireless 2g': '无线 2G',
+  'virtual param': '虚拟参数',
+  'emit virtual event': '触发虚拟事件',
+  'mode for ir': '模式',
+  'temperature for ir': '温度'
 };
 
-function translateMiotText(input: string): string {
+/** 全局通用 MIoT 词条翻译：词典精确匹配 + 组合词/分词多级回退，未命中原样返回 */
+export function translateMiotText(input: string): string {
   const key = input.trim().toLowerCase().replace(/[-_]/g, ' ');
   const exact = MIOT_TEXT_DICTIONARY[key];
   if (exact !== undefined) {
@@ -517,6 +569,66 @@ MIOT_TEXT_DICTIONARY['power saving'] = '省电';
 MIOT_TEXT_DICTIONARY['pm 2.5'] = 'PM2.5';
 MIOT_TEXT_DICTIONARY['particulate matter'] = '颗粒物';
 MIOT_TEXT_DICTIONARY['particles'] = '颗粒物';
+
+// —— 小众品类/厂商自定义词条补充（真机验证中发现的英文残留） ——
+MIOT_TEXT_DICTIONARY['gear'] = '档位';
+MIOT_TEXT_DICTIONARY['gear fan level'] = '风速档位';
+MIOT_TEXT_DICTIONARY['stepless'] = '无级';
+MIOT_TEXT_DICTIONARY['stepless fan level'] = '无级风速';
+MIOT_TEXT_DICTIONARY['one key'] = '一键';
+MIOT_TEXT_DICTIONARY['one key cycle'] = '一键循环';
+MIOT_TEXT_DICTIONARY['one key back'] = '一键回位';
+MIOT_TEXT_DICTIONARY['cycle'] = '循环';
+MIOT_TEXT_DICTIONARY['ultra violet light'] = '紫外灯';
+MIOT_TEXT_DICTIONARY['ultraviolet light'] = '紫外灯';
+MIOT_TEXT_DICTIONARY['uv light'] = '紫外灯';
+MIOT_TEXT_DICTIONARY['mosquito'] = '灭蚊';
+MIOT_TEXT_DICTIONARY['mosquito repellent'] = '驱蚊';
+MIOT_TEXT_DICTIONARY['repellent'] = '驱蚊';
+MIOT_TEXT_DICTIONARY['negative ion'] = '负离子';
+MIOT_TEXT_DICTIONARY['anion'] = '负离子';
+MIOT_TEXT_DICTIONARY['dry'] = '除湿';
+MIOT_TEXT_DICTIONARY['aux heating'] = '电辅热';
+MIOT_TEXT_DICTIONARY['auxiliary heating'] = '电辅热';
+MIOT_TEXT_DICTIONARY['screen'] = '屏显';
+MIOT_TEXT_DICTIONARY['screen display'] = '屏显';
+MIOT_TEXT_DICTIONARY['display'] = '显示';
+MIOT_TEXT_DICTIONARY['sound'] = '声音';
+MIOT_TEXT_DICTIONARY['beep'] = '提示音';
+MIOT_TEXT_DICTIONARY['buzzer'] = '提示音';
+MIOT_TEXT_DICTIONARY['physical control locked'] = '童锁';
+MIOT_TEXT_DICTIONARY['physical controls locked'] = '童锁';
+MIOT_TEXT_DICTIONARY['horizontal angle'] = '水平角度';
+MIOT_TEXT_DICTIONARY['vertical angle'] = '垂直角度';
+
+// —— 红外遥控虚拟设备（miir.*） ——
+MIOT_TEXT_DICTIONARY['mode for ir'] = '模式';
+MIOT_TEXT_DICTIONARY['temperature for ir'] = '设定温度';
+MIOT_TEXT_DICTIONARY['ir fan control'] = '红外风扇控制';
+MIOT_TEXT_DICTIONARY['ir aircondition control'] = '红外空调控制';
+MIOT_TEXT_DICTIONARY['fan speed up'] = '风速+';
+MIOT_TEXT_DICTIONARY['fan speed down'] = '风速-';
+MIOT_TEXT_DICTIONARY['temperature up'] = '温度+';
+MIOT_TEXT_DICTIONARY['temperature down'] = '温度-';
+MIOT_TEXT_DICTIONARY['horizontal swing on'] = '开启摆风';
+MIOT_TEXT_DICTIONARY['horizontal swing off'] = '关闭摆风';
+
+// —— 领普/储运插座（cuco.plug）等私有服务 ——
+MIOT_TEXT_DICTIONARY['quick countdown'] = '快速倒计时';
+MIOT_TEXT_DICTIONARY['charging protection'] = '充电保护';
+MIOT_TEXT_DICTIONARY['max power limit'] = '功率上限';
+MIOT_TEXT_DICTIONARY['power limit'] = '功率上限';
+MIOT_TEXT_DICTIONARY['power ext'] = '功率扩展';
+MIOT_TEXT_DICTIONARY['over use ele alert'] = '超额用电提醒';
+MIOT_TEXT_DICTIONARY['over ele day'] = '日超额电量';
+MIOT_TEXT_DICTIONARY['over ele month'] = '月超额电量';
+MIOT_TEXT_DICTIONARY['on off count'] = '开关次数';
+MIOT_TEXT_DICTIONARY['default power on state'] = '上电默认状态';
+MIOT_TEXT_DICTIONARY['left time'] = '剩余时长';
+MIOT_TEXT_DICTIONARY['protect time'] = '保护时长';
+MIOT_TEXT_DICTIONARY['data value'] = '数值';
+MIOT_TEXT_DICTIONARY['charge prt ext'] = '充电保护扩展';
+MIOT_TEXT_DICTIONARY['power limit ext'] = '功率上限扩展';
 MIOT_TEXT_DICTIONARY['tvoc'] = 'TVOC';
 MIOT_TEXT_DICTIONARY['formaldehyde'] = '甲醛';
 MIOT_TEXT_DICTIONARY['co2'] = 'CO2';
@@ -674,6 +786,70 @@ MIOT_TEXT_DICTIONARY['hour'] = '小时';
 MIOT_TEXT_DICTIONARY['second'] = '秒';
 MIOT_TEXT_DICTIONARY['realtime'] = '实时';
 MIOT_TEXT_DICTIONARY['real-time'] = '实时';
+// 补充常用词条
+MIOT_TEXT_DICTIONARY['celsius'] = '摄氏度';
+MIOT_TEXT_DICTIONARY['fahrenheit'] = '华氏度';
+MIOT_TEXT_DICTIONARY['motion'] = '移动';
+MIOT_TEXT_DICTIONARY['motion detected'] = '检测到移动';
+MIOT_TEXT_DICTIONARY['presence'] = '人体存在';
+MIOT_TEXT_DICTIONARY['occupied'] = '有人';
+MIOT_TEXT_DICTIONARY['unoccupied'] = '无人';
+MIOT_TEXT_DICTIONARY['illuminance'] = '光照度';
+MIOT_TEXT_DICTIONARY['lux'] = '光照度';
+MIOT_TEXT_DICTIONARY['light intensity'] = '光照强度';
+MIOT_TEXT_DICTIONARY['door'] = '门';
+MIOT_TEXT_DICTIONARY['door state'] = '门窗状态';
+MIOT_TEXT_DICTIONARY['open state'] = '开启状态';
+MIOT_TEXT_DICTIONARY['water shortage'] = '缺水';
+MIOT_TEXT_DICTIONARY['water level'] = '水位';
+MIOT_TEXT_DICTIONARY['water tank'] = '水箱';
+MIOT_TEXT_DICTIONARY['tank full'] = '水箱已满';
+MIOT_TEXT_DICTIONARY['dust box'] = '尘盒';
+MIOT_TEXT_DICTIONARY['dust bag'] = '尘袋';
+MIOT_TEXT_DICTIONARY['side brush'] = '边刷';
+MIOT_TEXT_DICTIONARY['main brush'] = '主刷';
+MIOT_TEXT_DICTIONARY['roller brush'] = '滚刷';
+MIOT_TEXT_DICTIONARY['suction power'] = '吸力';
+MIOT_TEXT_DICTIONARY['cleaning area'] = '清扫面积';
+MIOT_TEXT_DICTIONARY['cleaning count'] = '清扫次数';
+MIOT_TEXT_DICTIONARY['cleaning time'] = '清扫时长';
+MIOT_TEXT_DICTIONARY['total cleaning time'] = '总清扫时长';
+MIOT_TEXT_DICTIONARY['scheduled clean'] = '定时清扫';
+MIOT_TEXT_DICTIONARY['continue cleaning'] = '继续清扫';
+MIOT_TEXT_DICTIONARY['clean now'] = '立即清扫';
+MIOT_TEXT_DICTIONARY['sweep and mop'] = '扫拖一体';
+MIOT_TEXT_DICTIONARY['mop only'] = '仅拖地';
+MIOT_TEXT_DICTIONARY['sweep only'] = '仅扫地';
+MIOT_TEXT_DICTIONARY['dock'] = '回充';
+MIOT_TEXT_DICTIONARY['return to charge'] = '返回充电';
+MIOT_TEXT_DICTIONARY['find robot'] = '查找机器人';
+MIOT_TEXT_DICTIONARY['abnormal'] = '异常';
+MIOT_TEXT_DICTIONARY['firmware version'] = '固件版本';
+MIOT_TEXT_DICTIONARY['serial number'] = '序列号';
+MIOT_TEXT_DICTIONARY['connection'] = '连接';
+MIOT_TEXT_DICTIONARY['connection status'] = '连接状态';
+MIOT_TEXT_DICTIONARY['signal strength'] = '信号强度';
+MIOT_TEXT_DICTIONARY['ip address'] = 'IP 地址';
+MIOT_TEXT_DICTIONARY['mac address'] = 'MAC 地址';
+MIOT_TEXT_DICTIONARY['cloud'] = '云端';
+MIOT_TEXT_DICTIONARY['local'] = '本地';
+MIOT_TEXT_DICTIONARY['away'] = '离家';
+MIOT_TEXT_DICTIONARY['home'] = '在家';
+MIOT_TEXT_DICTIONARY['trigger'] = '触发';
+MIOT_TEXT_DICTIONARY['condition'] = '条件';
+MIOT_TEXT_DICTIONARY['action'] = '动作';
+MIOT_TEXT_DICTIONARY['delay'] = '延时';
+MIOT_TEXT_DICTIONARY['on time'] = '开机时长';
+MIOT_TEXT_DICTIONARY['off time'] = '关机时长';
+MIOT_TEXT_DICTIONARY['electric kettle'] = '电水壶';
+MIOT_TEXT_DICTIONARY['rice cooker'] = '电饭煲';
+MIOT_TEXT_DICTIONARY['air fryer'] = '空气炸锅';
+MIOT_TEXT_DICTIONARY['refrigerator'] = '冰箱';
+MIOT_TEXT_DICTIONARY['washing machine'] = '洗衣机';
+MIOT_TEXT_DICTIONARY['dishwasher'] = '洗碗机';
+MIOT_TEXT_DICTIONARY['camera'] = '摄像头';
+MIOT_TEXT_DICTIONARY['door lock'] = '门锁';
+MIOT_TEXT_DICTIONARY['last seen'] = '最后在线时间';
 
 /**
  * 服务类型（service.type 最后一段）→ 中文功能/设备名。
@@ -1021,9 +1197,12 @@ function isHiddenService(service: MIoTSpecService): boolean {
  * 2. 已知服务 + 通用开关属性 → “功能名+开关”；
  * 3. 其余走通用字典翻译。
  */
-function resolveLabel(service: MIoTSpecService, description: string, isBool: boolean): string {
+function resolveLabel(service: MIoTSpecService, description: string, isBool: boolean, serviceDisplayName?: string): string {
   const serviceKey = serviceKeyOf(service);
   if (isBool && isGenericOnOff(description)) {
+    if (serviceDisplayName !== undefined && serviceDisplayName.length > 0) {
+      return serviceDisplayName;
+    }
     const boolLabel = SERVICE_BOOL_LABELS[serviceKey];
     if (boolLabel !== undefined) {
       return boolLabel;
@@ -1032,8 +1211,87 @@ function resolveLabel(service: MIoTSpecService, description: string, isBool: boo
     if (serviceName !== undefined) {
       return `${serviceName}开关`;
     }
+    // 服务词典查不到（小众/私有服务）时，用服务描述/服务名区分，
+    // 避免同一设备多个服务的开关全部显示为重复的「开关/开」。
+    // 依次尝试候选文本，翻译结果仍是通用词（开关/开/switch…）时继续找下一个。
+    const nameText = service.name.replace(/-/g, ' ').trim();
+    const candidates: string[] = [];
+    if (service.description.trim().length > 0) {
+      candidates.push(service.description.trim());
+    }
+    if (nameText.length > 0 && candidates.indexOf(nameText) < 0) {
+      candidates.push(nameText);
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      const translated = translateMiotText(candidates[i]);
+      if (translated.length > 0 && !isGenericOnOff(translated) && translated !== '开关') {
+        return `${translated}开关`;
+      }
+    }
   }
   return translateMiotText(description);
+}
+
+/**
+ * 通用动作名：spec 中不同服务都有 “toggle” 等动作，翻译后全是“切换”，
+ * 用户无法分辨是哪个功能，需要像 resolveLabel 一样补上服务上下文，
+ * 例如 “灯光·切换”“童锁·切换”。
+ */
+const GENERIC_ACTION_LABELS: string[] = [
+  'toggle', 'switch', '切换', '开关', '开', '关'
+];
+
+function resolveActionLabel(service: MIoTSpecService, action: MIoTSpecAction, serviceDisplayName?: string): string {
+  const raw = action.description.trim().length > 0 ? action.description : action.name;
+  const label = translateMiotText(raw);
+  if (GENERIC_ACTION_LABELS.indexOf(label.trim()) < 0) {
+    return label;
+  }
+  const serviceName = serviceDisplayName !== undefined && serviceDisplayName.length > 0
+    ? serviceDisplayName
+    : SERVICE_LABEL_DICTIONARY[serviceKeyOf(service)];
+  return serviceName === undefined ? label : `${serviceName}·${label}`;
+}
+
+/**
+ * 多实例服务消歧：排插多路插孔、多键墙开等设备的 spec 会有多个同名服务
+ * （URN 服务名相同、仅 siid 不同），直接翻译会出现一排完全一样的
+ * “开关 / 开关·切换”。统计同名服务数量，为多实例服务生成带编号的显示名
+ * （开关1、开关2…），单实例服务保持原样。
+ */
+export function resolveServiceDisplayNames(services: MIoTSpecService[]): Map<number, string> {
+  const keyCounts = new Map<string, number>();
+  for (let i = 0; i < services.length; i++) {
+    if (isHiddenService(services[i])) {
+      continue;
+    }
+    const key = serviceKeyOf(services[i]);
+    keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+  }
+  const running = new Map<string, number>();
+  const names = new Map<number, string>();
+  for (let i = 0; i < services.length; i++) {
+    const service = services[i];
+    if (isHiddenService(service)) {
+      continue;
+    }
+    const key = serviceKeyOf(service);
+    if ((keyCounts.get(key) ?? 1) <= 1) {
+      continue;
+    }
+    const index = (running.get(key) ?? 0) + 1;
+    running.set(key, index);
+    let baseName = SERVICE_LABEL_DICTIONARY[key];
+    if (baseName === undefined) {
+      const raw = service.description.trim().length > 0 ? service.description : service.name;
+      baseName = translateMiotText(raw);
+    }
+    if (baseName.trim().length === 0) {
+      continue;
+    }
+    names.set(service.iid, `${baseName}${index}`);
+  }
+  return names;
 }
 
 const MIOT_UNIT_DICTIONARY: Record<string, string> = {
@@ -1061,7 +1319,8 @@ const MIOT_UNIT_DICTIONARY: Record<string, string> = {
   'ug': 'μg'
 };
 
-function translateMiotUnit(input: string): string {
+/** 全局通用 MIoT 单位翻译 */
+export function translateMiotUnit(input: string): string {
   if (input.length === 0) {
     return input;
   }
@@ -1106,6 +1365,130 @@ function isNamelessProperty(property: MIoTSpecProperty): boolean {
   return /^\d+$/.test(name);
 }
 
+// ==================== 常用 / 扩展属性分级 ====================
+// 目标：详情页默认只展示原版米家明面功能（电源/模式/风速/扫风/定时/亮度等），
+// 其余属性（角度、童锁、回正、厂商私有调试属性等）由页面收纳进「更多功能」折叠区。
+// 分级依据是 miot-spec 标准 URN 的属性名（两种 spec 数据源均携带 URN），
+// 不按设备品类配置，未知品类设备也能正确分级。
+
+/** 可写属性白名单：米家明面上的常用控制 */
+/** 可写属性白名单：米家明面上的常用控制（对齐原版：电源/模式/风速/扫风/定时/亮度/温度） */
+const COMMON_CONTROL_KEYS: string[] = [
+  'on',
+  'mode',
+  'fan-level',
+  'horizontal-swing',
+  'vertical-swing',
+  'swing-mode',
+  'off-delay-time',
+  'brightness',
+  'color-temperature',
+  'target-temperature',
+  'ir-mode',
+  'ir-temperature',
+  'volume',
+  'mute'
+];
+
+/** 只读属性白名单：米家明面上的常用读数 */
+const COMMON_READOUT_KEYS: string[] = [
+  'temperature',
+  'relative-humidity',
+  'pm2-5-density',
+  'battery-level',
+  'power',
+  'electric-power',
+  'filter-life-level',
+  'voltage',
+  'current'
+];
+
+/** 属性 URN 末段名，如 urn:miot-spec-v2:property:fan-level:00000008:* → fan-level */
+function propertyKeyOf(property: MIoTSpecProperty): string {
+  const raw = property.type.trim().toLowerCase();
+  const parts = raw.split(':');
+  // 标准格式: urn:<spec>:property:<name>:<piid>:<vendor>:<version>
+  if (parts.length >= 4 && parts[2] === 'property') {
+    return parts[3].replace(/\s+/g, '-');
+  }
+  const last = parts.length > 0 ? parts[parts.length - 1] : raw;
+  return last.replace(/\s+/g, '-');
+}
+
+/**
+ * 判断属性是否属于米家明面的常用功能：
+ * 1. 厂商私有属性一律视为扩展功能；
+ * 2. 亮度/色温仅灯光类服务视为常用（风扇 LED 屏亮度等收进「更多功能」）；
+ * 3. 其余可写属性按控制白名单，只读属性按读数白名单（含净水器 TDS 读数）；
+ * 4. 不在白名单内的属性（角度/童锁/故障/文本输入等）进「更多功能」折叠区。
+ */
+export function isCommonProperty(service: MIoTSpecService, property: MIoTSpecProperty): boolean {
+  const key = propertyKeyOf(property);
+  // 主开关始终明面展示：部分设备（空调等）的电源属性挂在厂商私有服务里，
+  // 不能因 proprietary 被折叠，否则明面只剩温度等数值、看不到开关状态。
+  if (property.writable && key === 'on') {
+    return true;
+  }
+  if (property.proprietary) {
+    return false;
+  }
+  if (key === 'brightness' || key === 'color-temperature') {
+    return serviceKeyOf(service).includes('light');
+  }
+  if (property.writable) {
+    return COMMON_CONTROL_KEYS.indexOf(key) >= 0;
+  }
+  return COMMON_READOUT_KEYS.indexOf(key) >= 0 || key.includes('tds');
+}
+
+/**
+ * 多主电源收敛：部分设备（排插多路、空调伴侣等）多个服务的开关都会命中
+ * 电源样式（isPower），全部渲染成电源圆钮会让用户误以为有多个主开关。
+ * 只保留 spec 声明顺序中的第一个为主电源并置顶，其余降级为普通开关卡片。
+ */
+export function markPrimaryPower(controls: PropertyControlDescriptor[]): void {
+  let primaryIndex = -1;
+  for (let i = 0; i < controls.length; i++) {
+    if (controls[i].isPower) {
+      if (primaryIndex < 0) {
+        primaryIndex = i;
+      } else {
+        controls[i].isPower = false;
+      }
+    }
+  }
+  if (primaryIndex > 0) {
+    const primary = controls[primaryIndex];
+    controls.splice(primaryIndex, 1);
+    controls.unshift(primary);
+  }
+}
+
+/**
+ * 设备级重名标签消歧：极端情况下多个不同服务的开关标签仍可能完全相同
+ * （如厂商把所有私有服务的描述都写成 switch），为重复标签追加序号（·2/·3），
+ * 保证用户能看出这是不同的控制。
+ */
+export function dedupeControlLabels(controls: PropertyControlDescriptor[]): void {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < controls.length; i++) {
+    const label = controls[i].label;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  for (let i = 0; i < controls.length; i++) {
+    const label = controls[i].label;
+    if ((counts.get(label) ?? 0) <= 1) {
+      continue;
+    }
+    const index = (seen.get(label) ?? 0) + 1;
+    seen.set(label, index);
+    if (index > 1) {
+      controls[i].label = `${label}·${index}`;
+    }
+  }
+}
+
 export enum CapabilityControlType {
   TOGGLE = 'toggle',
   SLIDER = 'slider',
@@ -1131,6 +1514,15 @@ export interface PropertyControlDescriptor {
   optionValues: Object[];
   readable: boolean;
   writable: boolean;
+  /** 是否为设备主电源开关（用于决定是否渲染为圆形大按钮） */
+  isPower: boolean;
+  /**
+   * 开关/滑块的选中色。
+   * 由渲染层注入当前主题色，而不是在控件里硬编码品牌绿——否则切主题色时开关不跟随。
+   */
+  onColor: string;
+  /** 是否为常用属性（米家明面功能）；false 时收纳进「更多功能」折叠区 */
+  isCommon: boolean;
 }
 
 export interface ActionControlDescriptor {
@@ -1156,7 +1548,8 @@ export interface ActionArgumentDescriptor {
 
 export function resolvePropertyControl(
   service: MIoTSpecService,
-  property: MIoTSpecProperty
+  property: MIoTSpecProperty,
+  serviceDisplayName?: string
 ): PropertyControlDescriptor {
   const type = resolveControlType(property);
   const valueRange = property.valueRange;
@@ -1164,7 +1557,8 @@ export function resolvePropertyControl(
   const optionValues: Object[] = [];
   const propText = property.description.trim().length > 0 ? property.description : property.name;
   const isOnOff = isGenericOnOff(propText);
-  const label = resolveLabel(service, propText, isOnOff);
+  const label = resolveLabel(service, propText, isOnOff, serviceDisplayName);
+  const isPower = isPowerProperty(service, property, label);
   for (let i = 0; i < property.valueList.length; i++) {
     const itemText = property.valueList[i].description.trim().length > 0 ?
       property.valueList[i].description : property.valueList[i].name;
@@ -1184,13 +1578,34 @@ export function resolvePropertyControl(
     options: options,
     optionValues: optionValues,
     readable: property.readable,
-    writable: property.writable
+    writable: property.writable,
+    isPower: isPower,
+    isCommon: isCommonProperty(service, property) || isPower,
+    onColor: HwColor.primary
   };
+}
+
+/**
+ * 判断属性是否为设备主电源开关。
+ * 主电源开关属性在 MIoT 中通常命名为 power（或 on/off/switch 且服务为 power），
+ * 标签兜底匹配“电源开关/开关”，指示灯、模式等其它开关不视为电源开关。
+ */
+function isPowerProperty(service: MIoTSpecService, property: MIoTSpecProperty, label: string): boolean {
+  const rawName = property.name.trim().toLowerCase();
+  if (rawName === 'power' || rawName === 'on' || rawName === 'off' || rawName === 'switch') {
+    const serviceKey = serviceKeyOf(service);
+    if (serviceKey === 'power' || serviceKey === 'switch' ||
+      serviceKey.includes('power') || serviceKey.includes('switch')) {
+      return true;
+    }
+  }
+  return label === '电源开关' || label === '开关';
 }
 
 export function resolveActionControl(
   service: MIoTSpecService,
-  action: MIoTSpecAction
+  action: MIoTSpecAction,
+  serviceDisplayName?: string
 ): ActionControlDescriptor {
   const args: ActionArgumentDescriptor[] = [];
   for (let i = 0; i < action.inPiids.length; i++) {
@@ -1212,7 +1627,7 @@ export function resolveActionControl(
     const isArgOnOff = isGenericOnOff(argText);
     args.push({
       piid: piid,
-      label: resolveLabel(service, argText, isArgOnOff),
+      label: resolveLabel(service, argText, isArgOnOff, serviceDisplayName),
       format: prop.format,
       unit: translateMiotUnit(prop.unit),
       min: range === null ? 0 : range.min,
@@ -1226,33 +1641,35 @@ export function resolveActionControl(
     siid: service.iid,
     aiid: action.iid,
     type: CapabilityControlType.BUTTON,
-    label: translateMiotText(action.description.trim().length > 0 ? action.description : action.name),
+    label: resolveActionLabel(service, action, serviceDisplayName),
     argumentPiids: action.inPiids,
     arguments: args
   };
 }
 
-export function buildServiceControls(service: MIoTSpecService): PropertyControlDescriptor[] {
+export function buildServiceControls(service: MIoTSpecService, displayNames?: Map<number, string>): PropertyControlDescriptor[] {
   const controls: PropertyControlDescriptor[] = [];
   if (isHiddenService(service)) {
     return controls;
   }
+  const displayName = displayNames?.get(service.iid);
   for (let i = 0; i < service.properties.length; i++) {
     if (isDeviceInfoProperty(service.properties[i]) || isNamelessProperty(service.properties[i])) {
       continue;
     }
-    controls.push(resolvePropertyControl(service, service.properties[i]));
+    controls.push(resolvePropertyControl(service, service.properties[i], displayName));
   }
   return controls;
 }
 
-export function buildServiceActions(service: MIoTSpecService): ActionControlDescriptor[] {
+export function buildServiceActions(service: MIoTSpecService, displayNames?: Map<number, string>): ActionControlDescriptor[] {
   const actions: ActionControlDescriptor[] = [];
   if (isHiddenService(service)) {
     return actions;
   }
+  const displayName = displayNames?.get(service.iid);
   for (let i = 0; i < service.actions.length; i++) {
-    actions.push(resolveActionControl(service, service.actions[i]));
+    actions.push(resolveActionControl(service, service.actions[i], displayName));
   }
   return actions;
 }

@@ -20,9 +20,10 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import { MIoTSpecInstance } from '../models/MIotSpecModels';
+import { MIoTSpecInstance, parseMIoTSpecInstance } from '../models/MIotSpecModels';
+import { Logger } from '../utils/Logger';
 import { XiaomiAuthError, XiaomiErrorCode } from '../models/XiaomiErrors';
-import { XiaomiDevice, XiaomiHome, XiaomiUser } from '../models/XiaomiHomeModels';
+import { XiaomiDevice, XiaomiHome, XiaomiScene, XiaomiUser } from '../models/XiaomiHomeModels';
 import { MIoTSpecParser } from '../miot/MIoTSpecParser';
 import { SecureAuthStorage } from '../storage/SecureAuthStorage';
 import { DeviceController } from '../controllers/DeviceController';
@@ -32,10 +33,12 @@ import { XiaomiHomeSnapshot } from '../models/CacheState';
 import { JsonCache } from '../storage/JsonCache';
 import { XiaomiHomeRepository } from '../repositories/XiaomiHomeRepository';
 import { XiaomiSpecRepository } from '../repositories/XiaomiSpecRepository';
-import { MijiaApiClient, MijiaAuthData } from '../cloud/MijiaApiClient';
+import { MijiaApiClient, MijiaAuthData, MijiaConsumableItem, MijiaMessageItem } from '../cloud/MijiaApiClient';
 import { SecureMijiaAuthStorage } from '../storage/SecureMijiaAuthStorage';
 import { MijiaDeviceTransport } from '../controllers/MijiaDeviceTransport';
 import { MijiaSpecClient } from '../miot/MijiaSpecClient';
+import { LanDeviceTransport } from '../lan/LanDeviceTransport';
+import { LanDeviceSession } from '../models/LanDeviceSession';
 
 export class XiaomiDataService {
   private mijiaAuth: MijiaAuthData | null = null;
@@ -43,6 +46,8 @@ export class XiaomiDataService {
   private readonly specParser: MIoTSpecParser = new MIoTSpecParser();
   private readonly mijiaSpecClient: MijiaSpecClient = new MijiaSpecClient();
   private readonly eventBus: DeviceEventBus = new DeviceEventBus();
+  private readonly lanTransports: Map<string, LanDeviceTransport> = new Map();
+  private readonly lanSessionSignatures: Map<string, string> = new Map();
 
   async ensureReady(): Promise<void> {
     if (this.mijiaClient !== null && this.mijiaAuth !== null) {
@@ -94,6 +99,16 @@ export class XiaomiDataService {
     return this.mijiaClient!.getDevices(homeIds);
   }
 
+  async getScenes(homeId: string): Promise<XiaomiScene[]> {
+    await this.ensureReady();
+    return this.mijiaClient!.getScenes(homeId);
+  }
+
+  async runScene(sceneId: string, homeId: string): Promise<Record<string, Object>> {
+    await this.ensureReady();
+    return this.mijiaClient!.runScene(sceneId, homeId);
+  }
+
   async getDeviceSpec(urn: string): Promise<MIoTSpecInstance> {
     await this.ensureReady();
     return this.specParser.parse(urn);
@@ -105,6 +120,29 @@ export class XiaomiDataService {
       return this.specParser.parse(device.urn);
     }
     return this.mijiaSpecClient.getByModel(device.model);
+  }
+
+  /**
+   * 详情页专用：磁盘缓存优先的 spec 获取。
+   * spec 定义极少变化，首次联网拉取成功后落盘，之后渲染不再依赖网络——
+   * 避免 miot-spec.org 抖动时设备详情页整页空白。
+   */
+  async getDeviceSpecForDeviceCached(device: XiaomiDevice, context: common.UIAbilityContext): Promise<MIoTSpecInstance> {
+    await this.ensureReady();
+    const jsonCache = new JsonCache(context);
+    const cacheKey = device.urn.length > 0 ? device.urn : `model:${device.model}`;
+    const prefix = 'miot_spec_v1_';
+    const cachedRaw = jsonCache.get(`${prefix}${cacheKey}`);
+    if (cachedRaw.length > 0) {
+      try {
+        return parseMIoTSpecInstance(JSON.parse(cachedRaw) as Record<string, Object>);
+      } catch (err) {
+        Logger.warn('invalid cached spec, %{public}s', cacheKey);
+      }
+    }
+    const spec = await this.getDeviceSpecForDevice(device);
+    jsonCache.set(`${prefix}${cacheKey}`, JSON.stringify(spec));
+    return spec;
   }
 
   async getDeviceSpecCached(
@@ -126,9 +164,35 @@ export class XiaomiDataService {
     return repository.loadSnapshot(forceRefresh);
   }
 
-  async getDeviceController(): Promise<DeviceController> {
+  async getDeviceController(device?: XiaomiDevice): Promise<DeviceController> {
     await this.ensureReady();
-    return new DeviceController(new MijiaDeviceTransport(this.mijiaClient!), this.eventBus);
+    const cloudTransport = new MijiaDeviceTransport(this.mijiaClient!);
+    if (device !== undefined && device.token.length >= 32 && device.localIp.length > 0) {
+      const session: LanDeviceSession = {
+        did: device.did,
+        address: device.localIp,
+        port: 54321,
+        tokenHex: device.token,
+        keyHex: '',
+        ivHex: ''
+      };
+      const signature = `${device.localIp}:${device.token}`;
+      let lanTransport = this.lanTransports.get(device.did);
+      if (lanTransport !== undefined && this.lanSessionSignatures.get(device.did) !== signature) {
+        await lanTransport.close();
+        lanTransport = undefined;
+      }
+      if (lanTransport === undefined) {
+        lanTransport = new LanDeviceTransport();
+        lanTransport.connect(session);
+        this.lanTransports.set(device.did, lanTransport);
+      } else {
+        lanTransport.connect(session);
+      }
+      this.lanSessionSignatures.set(device.did, signature);
+      return new DeviceController(cloudTransport, this.eventBus, lanTransport);
+    }
+    return new DeviceController(cloudTransport, this.eventBus);
   }
 
   async getDeviceStatistics(
@@ -143,6 +207,22 @@ export class XiaomiDataService {
     return this.mijiaClient!.getStatistics(did, key, dataType, limit, timeStart, timeEnd);
   }
 
+  async checkCloudMessages(beginAt?: number): Promise<Record<string, Object>> {
+    await this.ensureReady();
+    return this.mijiaClient!.checkNewMsg(beginAt);
+  }
+
+  async getCloudMessageList(homeId: string): Promise<MijiaMessageItem[]> {
+    await this.ensureReady();
+    return this.mijiaClient!.getMessageList(homeId);
+  }
+
+  async getConsumableItems(homeId: string): Promise<MijiaConsumableItem[]> {
+    await this.ensureReady();
+    const ownerUid = await this.mijiaClient!.getHomeOwner(homeId);
+    return this.mijiaClient!.getConsumableItems(homeId, ownerUid);
+  }
+
   getEventBus(): DeviceEventBus {
     return this.eventBus;
   }
@@ -150,6 +230,15 @@ export class XiaomiDataService {
   async clearSession(): Promise<void> {
     this.mijiaAuth = null;
     this.mijiaClient = null;
+    const transports = Array.from(this.lanTransports.values());
+    this.lanTransports.clear();
+    this.lanSessionSignatures.clear();
+    for (let i = 0; i < transports.length; i++) {
+      try {
+        await transports[i].close();
+      } catch (err) {
+      }
+    }
     await SecureMijiaAuthStorage.clear();
   }
 }

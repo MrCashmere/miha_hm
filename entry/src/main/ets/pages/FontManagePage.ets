@@ -23,8 +23,9 @@ import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { HwColor, HwRadius, HwSpace, HwGlassCardColor } from '../utils/DesignTokens';
-import { isApi26OrAbove, immersiveMaterialModifier, legacyMaterialModifier, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
+import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { sheetBlurStyle } from '../utils/SystemMaterial';
+import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -34,6 +35,8 @@ import { FeedbackLogService } from '../services/FeedbackLogService';
 @Component
 struct FontManagePage {
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
+  /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
+  @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
   @StorageLink('customFonts') customFonts: string[] = [];
@@ -69,6 +72,11 @@ struct FontManagePage {
     }
     const family = this.hasCjk(content) ? this.fontFamilyZh : this.fontFamilyEn;
     return family === 'system' || family.length === 0 ? 'HarmonyOS Sans' : family;
+  }
+
+  /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
+  onAccentColorChanged(): void {
+    reloadAppTheme();
   }
 
   aboutToAppear(): void {
@@ -218,80 +226,92 @@ struct FontManagePage {
 
   @Builder
   renameSheet() {
-    Column({ space: 16 }) {
-      Column({ space: 6 }) {
-        Text('重命名字体')
-          .fontFamily(this.appFontFamily('重命名字体'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.textPrimary)
-        Text('输入新名称，扩展名将自动保持 .ttf / .otf')
-          .fontFamily(this.appFontFamily('输入新名称，扩展名将自动保持 .ttf / .otf'))
-          .fontWeight(this.appFontWeight())
-          .fontSize(12)
-          .fontColor(HwColor.textSecondary)
-      }
-      .alignItems(HorizontalAlign.Start)
-      .width('100%')
-
-      TextInput({ placeholder: '输入新字体名', text: this.renameDraft })
+    MaterialSheetPanel() {
+      Column({ space: 16 }) {
+        Column({ space: 6 }) {
+          Text('重命名字体')
+            .fontFamily(this.appFontFamily('重命名字体'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(HwColor.textPrimary)
+          Text('输入新名称，扩展名将自动保持 .ttf / .otf')
+            .fontFamily(this.appFontFamily('输入新名称，扩展名将自动保持 .ttf / .otf'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(12)
+            .fontColor(HwColor.textSecondary)
+        }
+        .alignItems(HorizontalAlign.Start)
         .width('100%')
-        .height(44)
-        .fontSize(15)
-        .fontColor(HwColor.textPrimary)
-        .placeholderColor(HwColor.textSecondary)
-        .backgroundColor(HwColor.surface)
-        .borderRadius(HwRadius.control)
-        .padding({ left: HwSpace.md, right: HwSpace.md })
-        .onChange((value: string) => {
-          this.renameDraft = value;
-        })
 
-      if (this.renameError.length > 0) {
-        Text(this.renameError)
-          .fontFamily(this.appFontFamily(this.renameError))
-          .fontWeight(this.appFontWeight())
-          .fontSize(13)
-          .fontColor(HwColor.danger)
+        TextInput({ placeholder: '输入新字体名', text: this.renameDraft })
           .width('100%')
-      }
+          .height(44)
+          .fontSize(15)
+          .fontColor(HwColor.textPrimary)
+          .placeholderColor(HwColor.textSecondary)
+          .backgroundColor(HwColor.surface)
+          .borderRadius(HwRadius.control)
+          .padding({ left: HwSpace.md, right: HwSpace.md })
+          .onChange((value: string) => {
+            this.renameDraft = value;
+          })
 
-      Row({ space: 12 }) {
-        Button('取消', { type: ButtonType.Capsule, stateEffect: true })
-          .layoutWeight(1)
-          .height(44)
-          .fontSize(15)
-          .fontColor(HwColor.textSecondary)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .onClick(() => {
-            this.showRenameSheet = false;
-          })
-        Button('确定', { type: ButtonType.Capsule, stateEffect: true })
-          .layoutWeight(1)
-          .height(44)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(HwColor.primary)
-          .backgroundColor(HwGlassCardColor.surface)
-          .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-          .border({ width: 1, color: HwGlassCardColor.border })
-          .enabled(this.renameDraft.trim().length > 0)
-          .opacity(this.renameDraft.trim().length > 0 ? 1 : 0.4)
-          .onClick(() => {
-            this.confirmRename();
-          })
+        if (this.renameError.length > 0) {
+          Text(this.renameError)
+            .fontFamily(this.appFontFamily(this.renameError))
+            .fontWeight(this.appFontWeight())
+            .fontSize(13)
+            .fontColor(HwColor.danger)
+            .width('100%')
+        }
+
+        Row({ space: 12 }) {
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('取消', { type: ButtonType.Capsule, stateEffect: false })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontColor(HwColor.textSecondary)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.showRenameSheet = false;
+              })
+          }
+            .layoutWeight(1)
+          Stack() {
+            // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+            // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+            MaterialCardLayer({ layerRadius: HwRadius.pill })
+            Button('确定', { type: ButtonType.Capsule, stateEffect: false })
+              .width('100%')
+              .height(44)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HwColor.primary)
+              .backgroundColor(Color.Transparent)
+              .enabled(this.renameDraft.trim().length > 0)
+              .opacity(this.renameDraft.trim().length > 0 ? 1 : 0.4)
+              .onClick(() => {
+                this.confirmRename();
+              })
+          }
+            .layoutWeight(1)
+        }
+        .width('100%')
       }
       .width('100%')
+      .padding({ left: HwSpace.lg, right: HwSpace.lg, top: 16, bottom: 24 })
     }
-    .width('100%')
-    .padding({ left: HwSpace.lg, right: HwSpace.lg, top: 16, bottom: 24 })
   }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
+      AccentColorSentinel()
       AppBackground()
       Column() {
         Scroll() {
@@ -318,7 +338,12 @@ struct FontManagePage {
                   .textAlign(TextAlign.Center)
               }
               ForEach(this.customFonts, (fileName: string, index: number) => {
-                Row({ space: 12 }) {
+                MaterialCard({
+                  cardRadius: HwRadius.card,
+                  cardPadding: HwSpace.lg,
+                  cardDirection: FlexDirection.Row,
+                  cardSpace: 12
+                }) {
                   Column({ space: 2 }) {
                     Text(this.aliasOf(fileName))
                       .fontFamily(this.appFontFamily(this.aliasOf(fileName)))
@@ -337,34 +362,33 @@ struct FontManagePage {
                   }
                   .alignItems(HorizontalAlign.Start)
                   .layoutWeight(1)
-                  Button('改名', { type: ButtonType.Capsule, stateEffect: true })
-                    .height(32)
-                    .fontSize(13)
-                    .fontColor(HwColor.textPrimary)
-                    .backgroundColor(HwGlassCardColor.surface)
-                    .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                    .border({ width: 1, color: HwGlassCardColor.border })
-                    .onClick(() => {
-                      this.startRename(index);
-                    })
-                  Button('删除', { type: ButtonType.Capsule, stateEffect: true })
-                    .height(32)
-                    .fontSize(13)
-                    .fontColor(HwColor.danger)
-                    .backgroundColor(HwGlassCardColor.surface)
-                    .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                    .border({ width: 1, color: HwGlassCardColor.border })
-                    .onClick(() => {
-                      this.confirmDelete(index);
-                    })
+                  Stack() {
+                    // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+                    // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+                    MaterialCardLayer({ layerRadius: HwRadius.pill })
+                    Button('改名', { type: ButtonType.Capsule, stateEffect: false })
+                      .height(32)
+                      .fontSize(13)
+                      .fontColor(HwColor.textPrimary)
+                      .backgroundColor(Color.Transparent)
+                      .onClick(() => {
+                        this.startRename(index);
+                      })
+                  }
+                  Stack() {
+                    // 材质承载层：与 MaterialCard 同源的 Toggle 承载。
+                    // 普通 Button 直接挂 systemMaterial 在真机上不渲染，这里统一走已验证的路径。
+                    MaterialCardLayer({ layerRadius: HwRadius.pill })
+                    Button('删除', { type: ButtonType.Capsule, stateEffect: false })
+                      .height(32)
+                      .fontSize(13)
+                      .fontColor(HwColor.danger)
+                      .backgroundColor(Color.Transparent)
+                      .onClick(() => {
+                        this.confirmDelete(index);
+                      })
+                  }
                 }
-                .width('100%')
-                .padding(HwSpace.lg)
-                .borderRadius(HwRadius.card)
-                .backgroundColor(HwGlassCardColor.surface)
-                .attributeModifier(this.immersiveLightEnabled && isApi26OrAbove() ? immersiveMaterialModifier : legacyMaterialModifier)
-                .border({ width: 1, color: HwGlassCardColor.border })
-                .clip(true)
               }, (fileName: string, index: number) => `${index}_${fileName}`)
             }
             .width('100%')
@@ -413,7 +437,7 @@ struct FontManagePage {
       height: SheetSize.MEDIUM,
       dragBar: true,
       showClose: false,
-      systemMaterial: sheetSystemMaterial(),
+      backgroundColor: Color.Transparent,
       blurStyle: sheetBlurStyle(),
       onDisappear: () => {
         this.renameIndex = -1;

@@ -20,12 +20,33 @@
  */
 
 import { notificationManager } from '@kit.NotificationKit';
+import { bundleManager, wantAgent, Want, WantAgent } from '@kit.AbilityKit';
 import {
   DeviceEvent,
   DeviceEventBus,
   DeviceEventName
 } from '../events/DeviceEventBus';
 import { Logger } from '../utils/Logger';
+import { translateMiotText } from '../components/CapabilityRenderer';
+
+const ENTRY_ABILITY_NAME: string = 'EntryAbility';
+
+/**
+ * 本应用的包名。
+ *
+ * 刻意在运行时读取，而不是写死一个常量：之前这里写死的是另一个包名，
+ * 通知绑定的跳转目标因此指向一个并不存在的应用，表现为「点通知没反应」。
+ * 运行时取值可以从根上杜绝这种不一致。
+ */
+function resolveBundleName(): string {
+  try {
+    return bundleManager.getBundleInfoForSelfSync(
+      bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT
+    ).name;
+  } catch (err) {
+    return '';
+  }
+}
 
 export class DeviceNotificationService {
   private readonly eventBus: DeviceEventBus;
@@ -64,11 +85,47 @@ export class DeviceNotificationService {
       }
     };
     this.nextId += 1;
+    // 点击通知直达设备详情：为通知绑定携带 did 的 wantAgent
+    const agent = await this.buildDeviceWantAgent(event.did);
+    if (agent !== null) {
+      request.wantAgent = agent;
+    }
     try {
       await notificationManager.publish(request);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       Logger.error('publish device notification failed, %{public}s', message);
+    }
+  }
+
+  private async buildDeviceWantAgent(did: string): Promise<WantAgent | null> {
+    if (did.length === 0) {
+      return null;
+    }
+    const bundleName = resolveBundleName();
+    if (bundleName.length === 0) {
+      // 拿不到自己的包名时宁可不绑跳转，也不要绑到一个错误的包上——
+      // 后者会让用户点了通知却毫无反应，比不绑更难排查。
+      return null;
+    }
+    const parameters: Record<string, Object> = { 'deviceDid': did };
+    const target: Want = {
+      bundleName: bundleName,
+      abilityName: ENTRY_ABILITY_NAME,
+      parameters: parameters
+    };
+    const info: wantAgent.WantAgentInfo = {
+      wants: [target],
+      operationType: wantAgent.OperationType.START_ABILITY,
+      requestCode: 0,
+      wantAgentFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+    };
+    try {
+      return await wantAgent.getWantAgent(info);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      Logger.error('build device want agent failed, %{public}s', message);
+      return null;
     }
   }
 
@@ -82,8 +139,9 @@ export class DeviceNotificationService {
     if (event.type === 'action_result') {
       return '设备动作已完成';
     }
-    const payload = event.payload as Record<string, Object>;
+    // payload 类型上非空，但运行时可能传入 null/undefined，判空避免异步方法内未处理异常
+    const payload = (event.payload ?? {}) as Record<string, Object>;
     const name = payload['name'] ?? payload['description'] ?? '设备事件';
-    return String(name);
+    return translateMiotText(String(name));
   }
 }

@@ -27,6 +27,11 @@ export class DeviceDetailRouteParam {
   }
 }
 
+export class DeviceManageRouteParam {
+  constructor() {
+  }
+}
+
 export class AboutDeviceRouteParam {
   readonly name: string;
   readonly manufacturer: string;

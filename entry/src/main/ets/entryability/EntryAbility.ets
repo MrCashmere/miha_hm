@@ -19,17 +19,18 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
-import { resourceManager } from '@kit.LocalizationKit';
+import { AbilityConstant, common, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { uiAppearance, window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { resourceManager } from '@kit.LocalizationKit';
 import { xiaomiOAuthSession } from '../services/XiaomiOAuthSession';
 import { DeviceNotificationService } from '../services/DeviceNotificationService';
 import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { loadCustomFonts } from '../utils/CustomFonts';
+import { applyAppTheme, resolveAccentColor } from '../utils/DesignTokens';
 
 const DOMAIN = 0x0000;
 
@@ -37,8 +38,8 @@ export default class EntryAbility extends UIAbility {
   private mainWindow: window.Window | null = null;
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     AppSettingsStore.init(this.context);
+    // 配色模式统一在读到设置之后再下发（见下方 resolveColorMode），这里不再先设一次
     FeedbackLogService.init(this.context);
     const hideOfflineDevices = AppSettingsStore.getBoolean('hideOfflineDevices', false);
     const selectedHomeId = AppSettingsStore.getString('selectedHomeId', '');
@@ -51,6 +52,7 @@ export default class EntryAbility extends UIAbility {
     const temperatureShowUnit = AppSettingsStore.getBoolean('temperatureShowUnit', false);
     const infoExcludedDevices = AppSettingsStore.getStringArray('infoExcludedDevices', []);
     const infoShowMoreContent = AppSettingsStore.getBoolean('infoShowMoreContent', true);
+    const showOverviewCards = AppSettingsStore.getBoolean('showOverviewCards', true);
     const sortDevicesByRoom = AppSettingsStore.getBoolean('sortDevicesByRoom', false);
     const fontMode = AppSettingsStore.getString('fontMode', 'system');
     const fontFamilyEn = AppSettingsStore.getString('fontFamilyEn', 'system');
@@ -86,6 +88,7 @@ export default class EntryAbility extends UIAbility {
       AppSettingsStore.setBoolean('homeSmoothSwitch', false);
     }
     AppStorage.setOrCreate('hideOfflineDevices', hideOfflineDevices);
+    AppStorage.setOrCreate('showOverviewCards', showOverviewCards);
     AppStorage.setOrCreate('selectedHomeId', selectedHomeId);
     AppStorage.setOrCreate('selectedHomeName', selectedHomeName);
     AppStorage.setOrCreate('backgroundImage', backgroundImage);
@@ -111,6 +114,22 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('cardsFromTop', cardsFromTop);
     AppStorage.setOrCreate('homeSmoothSwitch', homeSmoothSwitch);
     AppStorage.setOrCreate('customFonts', customFonts);
+    // 深色模式：用户在「外观设置」里手动切换过就以开关为准，没切换过则跟随系统。
+    // 1.0.7 及以前一直是跟随系统，保留这个默认值，避免老用户升级后被强制切成浅色。
+    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
+    // 平台层的配色也要跟应用内保持一致，否则系统控件与自绘颜色会一深一浅
+    try {
+      this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModeEnabled));
+    } catch (err) {
+    }
+    // 主题色在启动时就要生效：否则首屏会用默认蓝，切到其它页面才变
+    const accentKey = AppSettingsStore.getString('accentKey', 'harmony');
+    const accentCustom = AppSettingsStore.getString('accentCustom', '');
+    const accentColor = resolveAccentColor(accentKey, accentCustom);
+    AppStorage.setOrCreate('accentKey', accentKey);
+    AppStorage.setOrCreate('accentCustom', accentCustom);
+    AppStorage.setOrCreate('accentColor', accentColor);
+    applyAppTheme(darkModeEnabled, accentColor);
     const fontSizeScaleMode = AppStorage.get<string>('fontSizeMode') as string;
     const fontSizeScaleValue = AppStorage.get<number>('fontSizeValue') as number;
     let fontSizeScale: number = 1;
@@ -132,13 +151,28 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('is2in1', is2in1);
     AppStorage.setOrCreate('isWearable', isWearable);
     AppStorage.setOrCreate('homeSelectionVersion', 0);
-    const currentConfig = this.context.getApplicationContext().resourceManager.getConfigurationSync();
-    const isDarkMode = currentConfig.colorMode === resourceManager.ColorMode.DARK;
-    AppStorage.setOrCreate('isDarkMode', isDarkMode);
+    AppStorage.setOrCreate('isDarkMode', darkModeEnabled);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
     FeedbackLogService.recordOperation('SYSTEM', '应用启动 onCreate');
     const notificationService = new DeviceNotificationService(xiaomiDataService.getEventBus());
     notificationService.start();
+    // 冷启动经通知点入时，解析 want 中的设备 did 供首页直达详情
+    this.handleNotificationWant(want);
+  }
+
+  /** 解析通知 wantAgent 携带的设备 did，写入 AppStorage 由首页消费 */
+  private handleNotificationWant(want: Want): void {
+    try {
+      const params = want.parameters;
+      if (params === undefined) {
+        return;
+      }
+      const raw: Object | undefined = params['deviceDid'];
+      if (typeof raw === 'string' && (raw as string).length > 0) {
+        AppStorage.setOrCreate('pendingDeviceDetailDid', raw as string);
+      }
+    } catch (err) {
+    }
   }
 
   onDestroy(): void {
@@ -164,8 +198,8 @@ export default class EntryAbility extends UIAbility {
     mainWindow.setWindowSystemBarProperties({
       statusBarColor: '#00000000',
       navigationBarColor: '#00000000',
-      statusBarContentColor: '#182431',
-      navigationBarContentColor: '#182431'
+      statusBarContentColor: '#FFFFFF',
+      navigationBarContentColor: '#FFFFFF'
     }).catch((err: Error) => {
       hilog.error(DOMAIN, 'testTag', 'setWindowSystemBarProperties failed, %{public}s', err.message);
     });
@@ -177,6 +211,12 @@ export default class EntryAbility extends UIAbility {
           return;
         }
         hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+        // 窗口就绪后再设置背景色，避免窗口状态异常导致 JsError 崩溃
+        try {
+          mainWindow.setWindowBackgroundColor('#DCEAF8');
+        } catch (err) {
+          hilog.error(DOMAIN, 'testTag', 'setWindowBackgroundColor failed, %{public}s', (err as Error).message);
+        }
         this.publishWindowInsets(mainWindow);
         this.registerWindowSizeListener(mainWindow);
         mainWindow.on('avoidAreaChange', (data: window.AvoidAreaOptions): void => {
@@ -251,14 +291,59 @@ export default class EntryAbility extends UIAbility {
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    // 热启动经通知点入时同样解析设备 did
+    this.handleNotificationWant(want);
     xiaomiOAuthSession.handleCallback(want).catch((err: Error) => {
       hilog.error(DOMAIN, 'testTag', 'oauth callback error, %{public}s', err.message);
     });
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
-    const isDarkMode = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
-    AppStorage.setOrCreate('isDarkMode', isDarkMode);
+    // 未显式设置过深色模式时跟随系统，设置过则维持用户选择。
+    // 本回调会被 setColorMode 同步触发，存储未就绪时按默认值处理，避免进程崩溃。
+    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
+    applyAppTheme(darkModeEnabled);
+    AppStorage.setOrCreate('isDarkMode', darkModeEnabled);
+  }
+
+  /**
+   * 当前是否使用深色模式。
+   *
+   * 「外观设置」里切换过深色模式 → 以应用内开关为准；
+   * 从未切换过 → 跟随系统，保持与 1.0.7 一致的行为。
+   */
+  private static resolveDarkMode(context: common.UIAbilityContext): boolean {
+    try {
+      if (AppSettingsStore.has('darkModeEnabled')) {
+        return AppSettingsStore.getBoolean('darkModeEnabled', false);
+      }
+    } catch (err) {
+    }
+    return EntryAbility.systemDarkMode(context);
+  }
+
+  /** 读系统当前的深色模式 */
+  private static systemDarkMode(context: common.UIAbilityContext): boolean {
+    try {
+      const config = context.getApplicationContext().resourceManager.getConfigurationSync();
+      return config.colorMode === resourceManager.ColorMode.DARK;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /** 用户在应用内显式选过就下发明确模式，没选过则交还给系统 */
+  private static resolveColorMode(darkModeEnabled: boolean): ConfigurationConstant.ColorMode {
+    try {
+      if (!AppSettingsStore.has('darkModeEnabled')) {
+        return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+      }
+    } catch (err) {
+      return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+    }
+    return darkModeEnabled
+      ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+      : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
   }
 
   onForeground(): void {
