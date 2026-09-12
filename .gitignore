@@ -4,6 +4,12 @@
 **/.hvigor/
 **/.hvigor-user/
 
+# ---- macOS ----
+.DS_Store
+**/.DS_Store
+._*
+**/._*
+
 # ---- IDE ----
 .idea/
 **/.idea/
