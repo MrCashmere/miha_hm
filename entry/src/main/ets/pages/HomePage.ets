@@ -37,7 +37,7 @@ import { Logger } from '../utils/Logger';
 import { deviceSymbolFor, isLightDeviceText } from '../utils/DeviceSymbol';
 import { DataSourceState } from '../models/CacheState';
 import { XiaomiAuthError } from '../models/XiaomiErrors';
-import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwGlassCardColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { applyMaterialCarrier, pressLightColor, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
 import { isCelsiusUnit, celsiusToFahrenheit } from '../utils/TemperatureDisplay';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
@@ -2274,13 +2274,13 @@ struct HomePage {
             .fontFamily(this.appFontFamily(chip.name))
             .fontWeight(this.appFontWeight())
             .fontSize(this.isWearable ? 12 : 14)
-            .fontColor(this.selectedRoomKey === chip.key ? '#FFFFFF' : HwColor.textPrimary)
+            .fontColor(this.selectedRoomKey === chip.key ? onAccentColor(this.accent()) : HwColor.textPrimary)
             .maxLines(1)
           Text(String(chip.count))
             .fontFamily(this.appFontFamily(String(chip.count)))
             .fontWeight(this.appFontWeight())
             .fontSize(11)
-            .fontColor(this.selectedRoomKey === chip.key ? '#FFFFFF' : HwColor.textSecondary)
+            .fontColor(this.selectedRoomKey === chip.key ? onAccentColor(this.accent()) : HwColor.textSecondary)
             .opacity(0.85)
             .maxLines(1)
         }
@@ -2999,7 +2999,7 @@ struct HomePage {
         .fontFamily(this.appFontFamily(label))
         .fontWeight(this.appFontWeight())
         .fontSize(this.isWearable ? 12 : 13)
-        .fontColor(this.deviceSortMode === mode ? '#FFFFFF' : HwColor.textPrimary)
+        .fontColor(this.deviceSortMode === mode ? onAccentColor(this.accent()) : HwColor.textPrimary)
         .maxLines(1)
         .textAlign(TextAlign.Center)
         .hitTestBehavior(HitTestMode.None)
@@ -3825,7 +3825,7 @@ struct HomePage {
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
               .backgroundColor(HwColor.primary)
-              .fontColor(HwColor.surface)
+              .fontColor(onAccentColor(this.accent()))
               .onClick(() => {
                 this.saveDeviceRename();
               })

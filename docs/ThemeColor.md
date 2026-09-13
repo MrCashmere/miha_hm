@@ -64,8 +64,28 @@ export interface AccentPreset {
 export const ACCENT_PRESETS: AccentPreset[] = [
   { key: 'harmony', label: '鸿蒙蓝', value: '#0A59F7' },
   { key: 'rose',    label: '昔涟粉', value: '#E86A92' },
+  { key: 'ripple',  label: '涟漪粉', value: '#FAD6E4' },   // 浅色
+  { key: 'firefly', label: '流萤绿', value: '#88E4D4' },   // 浅色
 ];
 ```
+
+**主题色不都是深色。** 涟漪粉 `#FAD6E4`、流萤绿 `#88E4D4` 都很浅，
+压在它们上面的白字基本看不清。凡是「主题色底 + 文字」的地方一律走 `onAccentColor()`：
+
+```ts
+/** 按 sRGB 加权亮度决定压在主题色上用黑字还是白字（阈值 0.62 偏保守） */
+export function onAccentColor(accentColor: string): string {
+  // 鸿蒙蓝 0.33、昔涟粉 0.58 → 白字；涟漪粉 0.89、流萤绿 0.78 → 黑字
+  return luminance > 0.62 ? '#1A1A1A' : '#FFFFFF';
+}
+```
+
+覆盖到的位置：首页房间芯片 / 排序芯片、智能页分类芯片、场景编辑的重复日芯片、
+各处主色按钮（房间页「添加」、场景页「执行」、反馈页「生成日志文件」）、
+外观设置色块上的对勾、以及反馈页的步骤标签。
+
+> ⚠️ 调用时要把**订阅变量**传进去（`onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary)`），
+> 直接写 `onAccentColor(HwColor.primary)` 读的是模块级对象、登记不上依赖，切色后字色不会跟着变（见 §7.8）。
 
 **默认主题色就是预设首位的「鸿蒙蓝」**，另有两个常量固定这一档的含义：
 

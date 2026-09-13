@@ -19,7 +19,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -197,7 +197,7 @@ struct FeedbackPage {
           .fontFamily(this.appFontFamily('第一步'))
           .fontWeight(this.appFontWeight())
           .fontSize(13)
-          .fontColor(Color.White)
+          .fontColor(onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary))
           .backgroundColor(HwColor.primary)
           .borderRadius(8)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -217,7 +217,7 @@ struct FeedbackPage {
           .fontFamily(this.appFontFamily('第二步'))
           .fontWeight(this.appFontWeight())
           .fontSize(13)
-          .fontColor(Color.White)
+          .fontColor(onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary))
           .backgroundColor(HwColor.primary)
           .borderRadius(8)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -237,7 +237,7 @@ struct FeedbackPage {
           .fontFamily(this.appFontFamily('第三步'))
           .fontWeight(this.appFontWeight())
           .fontSize(13)
-          .fontColor(Color.White)
+          .fontColor(onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary))
           .backgroundColor(HwColor.primary)
           .borderRadius(8)
           .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -313,7 +313,7 @@ struct FeedbackPage {
                     .fontFamily(this.appFontFamily('开启完整日志模式'))
                     .fontWeight(this.appFontWeight())
                     .fontSize(15)
-                    .fontColor(Color.White)
+                    .fontColor(onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary))
                     .backgroundColor(HwColor.primary)
                     .borderRadius(HwRadius.control)
                     .onClick(() => {
@@ -357,7 +357,8 @@ struct FeedbackPage {
                 .fontFamily(this.appFontFamily('生成日志文件'))
                 .fontWeight(this.appFontWeight())
                 .fontSize(15)
-                .fontColor(Color.White)
+                .fontColor(this.logEnabled && !this.generating
+                  ? onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary) : HwColor.textSecondary)
                 .backgroundColor(this.logEnabled && !this.generating ? HwColor.primary : '#C5CBD3')
                 .enabled(this.logEnabled && !this.generating)
                 .borderRadius(HwRadius.control)

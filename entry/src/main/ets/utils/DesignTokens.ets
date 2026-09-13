@@ -47,11 +47,18 @@ export const DEFAULT_ACCENT_VALUE: string = '#0A59F7';
  * 主题色预设。
  * - harmony：鸿蒙默认蓝（HarmonyOS 品牌色），也是默认值
  * - rose   ：昔涟粉
+ * - ripple ：涟漪粉（浅色）
+ * - firefly：流萤绿（浅色）
  * - custom ：用户在设置里输入 RRGGBB
+ *
+ * 注意 `ripple` / `firefly` 是**浅色**：压在它们上面的文字不能用白色，
+ * 凡是「主题色底 + 文字」的地方都要走 `onAccentColor()` 取前景色。
  */
 export const ACCENT_PRESETS: AccentPreset[] = [
   { key: 'harmony', label: '鸿蒙蓝', value: '#0A59F7' },
   { key: 'rose', label: '昔涟粉', value: '#E86A92' },
+  { key: 'ripple', label: '涟漪粉', value: '#FAD6E4' },
+  { key: 'firefly', label: '流萤绿', value: '#88E4D4' },
 ];
 
 /** 主题色设置键：存预设 key 或 'custom' */
@@ -173,6 +180,28 @@ export function mixHex(base: string, tint: string, ratio: number): string {
     out += mixed.toString(16).toUpperCase().padStart(2, '0');
   }
   return out;
+}
+
+/**
+ * 压在主题色上的前景色。
+ *
+ * 主题色不都是深色：涟漪粉 `#FAD6E4`、流萤绿 `#88E4D4` 都很浅，
+ * 上面再压白字基本看不清。统一按**相对亮度**决定用黑字还是白字，
+ * 新增浅色预设时不必再去逐个调用点改字色。
+ *
+ * 阈值 0.62 偏保守（宁可早一点切黑字）：按 sRGB 加权亮度算，
+ * 鸿蒙蓝 0.33、昔涟粉 0.58 走白字，涟漪粉 0.89、流萤绿 0.78 走黑字。
+ */
+export function onAccentColor(accentColor: string): string {
+  const normalized = normalizeAccentHex(accentColor);
+  if (normalized.length === 0) {
+    return '#FFFFFF';
+  }
+  const r = parseInt(normalized.substring(1, 3), 16);
+  const g = parseInt(normalized.substring(3, 5), 16);
+  const b = parseInt(normalized.substring(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.62 ? '#1A1A1A' : '#FFFFFF';
 }
 
 /**

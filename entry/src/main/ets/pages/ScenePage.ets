@@ -20,7 +20,7 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { MaterialCard, MaterialCardLayer, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -321,7 +321,7 @@ struct ScenePage {
         .fontFamily(this.appFontFamily(label))
         .fontWeight(this.appFontWeight())
         .fontSize(13)
-        .fontColor(this.category === key ? '#FFFFFF' : HwColor.textPrimary)
+        .fontColor(this.category === key ? onAccentColor(this.accent()) : HwColor.textPrimary)
         .padding({ left: 16, right: 16, top: 7, bottom: 7 })
         .hitTestBehavior(HitTestMode.None)
     }
@@ -350,7 +350,7 @@ struct ScenePage {
       .fontWeight(this.appFontWeight())
       .fontSize(13)
       .fontWeight(FontWeight.Medium)
-      .fontColor('#FFFFFF')
+      .fontColor(onAccentColor(this.accent()))
       .padding({ left: 16, right: 16 })
       .hitTestBehavior(HitTestMode.None)
   }

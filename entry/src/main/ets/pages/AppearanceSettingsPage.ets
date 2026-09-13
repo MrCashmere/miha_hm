@@ -25,7 +25,7 @@ import { resourceManager } from '@kit.LocalizationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, HwColor, HwRadius, HwSpace, PRESS_GLOW_STORAGE, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground,
+import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, HwColor, HwRadius, HwSpace, PRESS_GLOW_STORAGE, applyAppTheme, normalizeAccentHex, normalizeAccentList, onAccentColor, reloadAppTheme, resolveAccentColor, resolvePageBackground,
   withAlpha } from '../utils/DesignTokens';
 import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
@@ -589,9 +589,11 @@ struct AppearanceSettingsPage {
               .height(34)
               .fill(color)
             if (selected) {
+              // 对勾压在这个色块自己的颜色上：浅色预设（涟漪粉 / 流萤绿）上白勾看不见，
+              // 按亮度自动切黑勾
               SymbolGlyph($r('sys.symbol.checkmark'))
                 .fontSize(16)
-                .fontColor([Color.White])
+                .fontColor([onAccentColor(color)])
             }
           }
           .width(34)

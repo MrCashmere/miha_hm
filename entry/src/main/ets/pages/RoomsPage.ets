@@ -21,7 +21,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { sheetBlurStyle } from '../utils/SystemMaterial';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
@@ -790,7 +790,7 @@ struct RoomsPage {
             .backgroundColor(HwColor.primary)
           SymbolGlyph($r('sys.symbol.checkmark'))
             .fontSize(14)
-            .fontColor([Color.White])
+            .fontColor([onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary)])
         } else {
           Row()
             .width(22)
@@ -867,7 +867,7 @@ struct RoomsPage {
           .width('100%')
           .height(48)
           .fontSize(16)
-          .fontColor(Color.White)
+          .fontColor(onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary))
           .backgroundColor(HwColor.primary)
           .margin({ left: HwSpace.lg, right: HwSpace.lg, top: 12, bottom: 24 })
           .enabled(this.selectedDids.length > 0)

@@ -11,7 +11,7 @@
 
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -876,7 +876,7 @@ struct SceneCreatePage {
                       .fontFamily(this.appFontFamily(label))
                       .fontWeight(this.appFontWeight())
                       .fontSize(12)
-                      .fontColor(this.timerDays[index] ? '#FFFFFF' : HwColor.textPrimary)
+                      .fontColor(this.timerDays[index] ? onAccentColor(this.accentColor.length > 0 ? this.accentColor : HwColor.primary) : HwColor.textPrimary)
                       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
                       .borderRadius(14)
                       .backgroundColor(this.timerDays[index]
