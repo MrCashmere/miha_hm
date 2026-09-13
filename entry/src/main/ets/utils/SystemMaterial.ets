@@ -103,6 +103,8 @@ let materialCache: uiMaterial.Material | null = null;
 let materialResolved: boolean = false;
 let interactiveMaterialCache: uiMaterial.Material | null = null;
 let interactiveMaterialResolved: boolean = false;
+let flatMaterialCache: uiMaterial.Material | null = null;
+let flatMaterialResolved: boolean = false;
 
 /**
  * 材质厚薄档位，集中一处便于按真机观感调档。
@@ -142,7 +144,8 @@ function materialStyle(): uiMaterial.ImmersiveStyle {
  *
  * @param interactive 是否开启交互形变 + 手指流光（HdsTab 那种灵动反馈）
  */
-function buildImmersiveMaterial(interactive: boolean = false): uiMaterial.Material | null {
+function buildImmersiveMaterial(interactive: boolean = false,
+                               withShadow: boolean = true): uiMaterial.Material | null {
   try {
     if (interactive) {
       // 《沉浸式系统材质视效》：interactive 开启按压弹性形变；
@@ -151,6 +154,14 @@ function buildImmersiveMaterial(interactive: boolean = false): uiMaterial.Materi
         style: materialStyle(),
         interactive: true,
         lightEffect: {}
+      });
+    }
+    if (!withShadow) {
+      // applyShadow 默认 true，材质会自带一层投影。小尺寸芯片上这层投影
+      // 会显得像「背后顶了一层影子」，所以单独开一档不带阴影的。
+      return new uiMaterial.ImmersiveMaterial({
+        style: materialStyle(),
+        applyShadow: false
       });
     }
     // 静态材质只传 style，避免可选字段影响材质本身。
@@ -172,9 +183,17 @@ function buildImmersiveMaterial(interactive: boolean = false): uiMaterial.Materi
  *
  * @param interactive 传 true 取「可交互」材质（按压形变 + 流光），按钮类用
  */
-export function getImmersiveMaterial(interactive: boolean = false): uiMaterial.Material | null {
+export function getImmersiveMaterial(interactive: boolean = false,
+                                     withShadow: boolean = true): uiMaterial.Material | null {
   if (!isApi26OrAbove()) {
     return null;
+  }
+  if (!withShadow && !interactive) {
+    if (!flatMaterialResolved) {
+      flatMaterialResolved = true;
+      flatMaterialCache = buildImmersiveMaterial(false, false);
+    }
+    return flatMaterialCache;
   }
   if (interactive) {
     if (!interactiveMaterialResolved) {
@@ -284,9 +303,10 @@ export function sheetBlurStyle(): BlurStyle | undefined {
 export function applyMaterialCarrier(
   instance: CommonAttribute,
   fallbackBlur: boolean = true,
-  interactive: boolean = false
+  interactive: boolean = false,
+  withShadow: boolean = true
 ): void {
-  const material: uiMaterial.Material | null = getImmersiveMaterial(interactive);
+  const material: uiMaterial.Material | null = getImmersiveMaterial(interactive, withShadow);
   if (immersiveEnabled() && material !== null) {
     instance.systemMaterial(material);
   } else if (fallbackBlur) {

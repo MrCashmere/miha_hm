@@ -164,6 +164,8 @@ export struct DeviceDetailPage {
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
   @StorageProp('isWearable') isWearable: boolean = false;
 
   private device: XiaomiDevice | null = null;
@@ -1909,7 +1911,7 @@ export struct DeviceDetailPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .clip(this.isWearable)
     .borderRadius(this.isWearable ? '50%' : 0)
     .hideTitleBar(true)

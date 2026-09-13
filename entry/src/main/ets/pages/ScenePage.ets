@@ -49,6 +49,8 @@ struct ScenePage {
   @StorageLink('fontWeightValue') fontWeightValue: number = 400;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
   @StorageProp('currentWidthBreakpoint') @Watch('onBreakpointChange')
   widthBp: WidthBreakpoint = WidthBreakpoint.WIDTH_SM;
 
@@ -311,7 +313,9 @@ struct ScenePage {
         .borderRadius(HwRadius.pill)
         .backgroundColor(this.category === key ? this.accent() : withAlpha(HwColor.textPrimary, 0.06))
 
-      MaterialCardLayer({ layerRadius: HwRadius.pill })
+      // 小尺寸芯片关掉材质自带投影：applyShadow 默认为 true，
+      // 那层投影在芯片上看起来就像「按钮背后顶了一层影子」。
+      MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 
       Text(label)
         .fontFamily(this.appFontFamily(label))
@@ -683,7 +687,7 @@ struct ScenePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

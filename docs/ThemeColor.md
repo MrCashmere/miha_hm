@@ -32,6 +32,8 @@
 | `accentKey` | `string` | 当前选中项。预设命中时为预设 `key`；选中自定义色时为固定字符串 `'custom'` |
 | `accentCustom` | `string` | 当前选中的自定义色，`RRGGBB`（**不含 `#`**） |
 | `accentCustomList` | `string[]` | 用户新增过的自定义色列表，顺序即界面展示顺序 |
+| `cardTintEnabled` | `boolean` | **卡片沾色**：卡片底色是否混入 10% 主题色 |
+| `customAccentFullAccess` | `boolean` | **高权限自定义主题色**：自定义色是否也参与页面背景染色 |
 
 `accentKey` 与 `accentCustom` 是**两个键**而不是一个：预设值本身写在代码常量里，
 只有 `custom` 才需要额外的色值。任何时刻 `resolveAccentColor()` 都能只靠这两个值算出最终颜色。
@@ -41,6 +43,8 @@
 | 键 | 说明 |
 | --- | --- |
 | `accentColor` | **最终解析好的颜色**（`#RRGGBB`）。所有 UI 依赖的是它，不是上面三个持久化键 |
+| `pageBackground` | 算好的页面底色，由 `applyAppTheme()` 发布。页面订阅它，见 §5.7 |
+| `cardSurface` | 算好的卡片底色（含沾色），由 `applyAppTheme()` 发布。卡片订阅它，见 §5.8 |
 | `accentKey` / `accentCustom` | 用 `@StorageLink` 与设置页双向绑定，写入即同步 |
 | `isDarkMode` | 与主题色同一条广播链，一起下发 |
 
@@ -255,12 +259,19 @@ applyAccentNow() → reloadAppTheme()
 HwGlassCardColor.*`，再由 `isDarkMode` + `accentColor` 两个键一起广播出去。
 所以加主题色时顺手就把深色模式接了，反过来也一样。
 
-**当前策略：设置过就以开关为准，没设置过就跟随系统。**
+**当前策略：三态偏好 —— 跟随系统 / 浅色 / 深色，默认跟随系统。**
+
+> **为什么是字符串三态而不是布尔开关：** 布尔一旦被用户拨动过就永久生效，
+> 再也没法回到「跟随系统」（表现为「深色模式不跟随系统」，只能靠重置设置救回来）。
+> 三态让「跟随系统」始终是一个能选回来的状态。
+> 1.1.0/1.1.1 存的旧布尔 `darkModeEnabled` 会在启动时迁移成 `dark` / `light` 并删除。
 
 ```ts
 // EntryAbility：启动时决定用哪个值
-const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
-this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModeEnabled));
+const darkModePref = EntryAbility.resolveDarkModePref();   // system / light / dark（含旧键迁移）
+AppStorage.setOrCreate(DARK_MODE_PREF_STORAGE, darkModePref);
+const darkModeEnabled = EntryAbility.resolveDarkMode(this.context, darkModePref);
+this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModePref));
 // 主题色在启动时就要生效，否则首屏会用默认色、切到别的页面才变
 const accentColor = resolveAccentColor(accentKey, accentCustom);
 AppStorage.setOrCreate('accentKey', accentKey);
@@ -270,14 +281,29 @@ applyAppTheme(darkModeEnabled, accentColor);
 ```
 
 ```ts
-/** 切换过就以应用内开关为准；从未切换过则跟随系统 */
-private static resolveDarkMode(context: common.UIAbilityContext): boolean {
+/** 读偏好，顺带把旧布尔键迁移成三态字符串 */
+private static resolveDarkModePref(): string {
   try {
-    if (AppSettingsStore.has('darkModeEnabled')) {
-      return AppSettingsStore.getBoolean('darkModeEnabled', false);
+    const stored = AppSettingsStore.getString(DARK_MODE_PREF_STORAGE, '');
+    if (stored === DARK_MODE_SYSTEM || stored === DARK_MODE_LIGHT || stored === DARK_MODE_DARK) {
+      return stored;
+    }
+    if (AppSettingsStore.has('darkModeEnabled')) {          // 旧版本残留
+      const legacy = AppSettingsStore.getBoolean('darkModeEnabled', false);
+      const migrated = legacy ? DARK_MODE_DARK : DARK_MODE_LIGHT;
+      AppSettingsStore.setString(DARK_MODE_PREF_STORAGE, migrated);
+      AppSettingsStore.delete('darkModeEnabled');
+      return migrated;
     }
   } catch (err) {
   }
+  return DARK_MODE_SYSTEM;                                   // 全新安装：跟随系统
+}
+
+/** 偏好为「跟随系统」时读系统，其余按偏好取值 */
+private static resolveDarkMode(context: common.UIAbilityContext, pref: string): boolean {
+  if (pref === DARK_MODE_DARK) { return true; }
+  if (pref === DARK_MODE_LIGHT) { return false; }
   return EntryAbility.systemDarkMode(context);
 }
 
@@ -291,23 +317,16 @@ private static systemDarkMode(context: common.UIAbilityContext): boolean {
   }
 }
 
-/** 显式选过就下发明确模式，没选过则交还给系统 */
-private static resolveColorMode(darkModeEnabled: boolean): ConfigurationConstant.ColorMode {
-  try {
-    if (!AppSettingsStore.has('darkModeEnabled')) {
-      return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-    }
-  } catch (err) {
-    return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-  }
-  return darkModeEnabled
-    ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
-    : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+/** 跟随系统时下发 NOT_SET 交还配色权；选了明确值才固定 */
+private static resolveColorMode(pref: string): ConfigurationConstant.ColorMode {
+  if (pref === DARK_MODE_DARK) { return ConfigurationConstant.ColorMode.COLOR_MODE_DARK; }
+  if (pref === DARK_MODE_LIGHT) { return ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT; }
+  return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
 }
 ```
 
-**「是否显式设置过」用 `AppSettingsStore.has()` 判断，而不是给布尔值加第三个状态。**
-存储里没有这个键 = 用户没选过 = 跟随系统；有这个键 = 用户选过 = 以键值为准。
+**「跟随系统」必须真的把配色权交还系统**：`setColorMode(COLOR_MODE_NOT_SET)`。
+只要下发过 `COLOR_MODE_DARK` / `COLOR_MODE_LIGHT`，系统再切深浅色应用也不会跟。
 
 三个必须同时做对的点：
 
@@ -483,23 +502,91 @@ categoryChip(key: string, label: string) {
 | **混得非常淡** | 浅色只混 12%、深色只混 18%；直接铺主题色会压过正文，页面看着像报错页 |
 
 ```ts
-const followed = accentColor.length > 0 && isPresetAccent(accentColor);
+// 默认只让内置预设色参与；「高权限自定义主题色」开关打开后自定义色也放行
+const fullAccess = readFlag(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false);
+const followed = accentColor.length > 0 && (isPresetAccent(accentColor) || fullAccess);
 const tintedLight = followed ? mixHex('#FFFFFF', accentColor, 0.12) : '#DCEAF8';
 const tintedDark = followed ? mixHex('#1A2D44', accentColor, 0.18) : '#1A2D44';
 HwColor.background = isDark ? tintedDark : tintedLight;
 HwColor.backgroundDark = tintedDark;   // ← 别漏：页面读的是 isDarkMode ? backgroundDark : background
 ```
 
+> 「高权限自定义主题色」开关**只是把 `isPresetAccent()` 这个门槛去掉**，淡染算法完全一样
+> （自定义色照样与白/深底按 12% / 18% 混合）。所以它不影响观感上限，只是把选择权交回用户。
+
 实际效果（浅色模式）：鸿蒙蓝 `#0A59F7` → `#E2EBFE`；昔涟粉 `#E86A92` → `#FCEDF2`。
 
-页面侧**必须通过 `resolvePageBackground()` 取这个值**，不能直接读 `HwColor.background`：
+页面侧**必须订阅 `pageBackground` 广播键**，不能直接读 `HwColor.background`：
 
 ```ts
-.backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+// 页面里
+@StorageProp('pageBackground') pageBackground: string = '';
+...
+.backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
 ```
 
+`applyAppTheme()` 每次跑完都会把算好的底色发布到 `pageBackground`，
+所以**主题色、深浅色、两个开关**里任何一个变化，页面都会收到通知。
+
 原因见 §7.8 —— 直接读 `HwColor.background` 不会被 ArkUI 登记为依赖，
-切主题色时已打开的页面不会重算底色。两个入参必须是页面自己声明的订阅变量。
+切主题色时已打开的页面不会重算底色。
+
+### 5.8 卡片底色与「卡片沾色」开关
+
+卡片底色同理，走 `cardSurface` 广播键：
+
+```ts
+// MaterialCard / MaterialSheetPanel 里
+@StorageProp('cardSurface') cardSurface: string = '';
+...
+.backgroundColor(this.cardSurface.length > 0 ? this.cardSurface : HwGlassCardColor.surface)
+```
+
+打开「卡片沾色」后，`applyAppTheme()` 发布的是**一层 10% 主题色叠加层**，不是混进底色：
+
+```ts
+AppStorage.setOrCreate(CARD_TINT_KEY,
+  accentColor.length > 0 && readFlag(CARD_TINT_STORAGE, false)
+    ? withAlpha(accentColor, 0.1) : '');
+```
+
+卡片把它画在**材质之上、内容之下**：
+
+```ts
+@Builder
+cardBody() {
+  if (this.materialActive()) {
+    MaterialCardLayer({ layerRadius: this.cardRadius })
+  }
+  if (this.cardTint.length > 0) {
+    Column()
+      // 必须 matchParent，不能写 width/height('100%')：百分比在 Stack 内按
+      // **父级可用尺寸**解析，高度会撑到容器满高、把卡片顶大。
+      .width(LayoutPolicy.matchParent)
+      .height(LayoutPolicy.matchParent)
+      .backgroundColor(this.cardTint)          // ← 沾色层
+      .hitTestBehavior(HitTestMode.None)
+  }
+  Flex({ ... }) { this.cardContent() }         // 内容在最上层
+}
+```
+
+**沾色层与 `MaterialCardLayer` 必须用同一种尺寸写法（`LayoutPolicy.matchParent`）。**
+两者是 Stack 里的兄弟节点、要盖住同一块区域；一个用 `matchParent`、另一个用百分比，
+后者会按父级可用尺寸把自己撑大，连带把卡片顶大。
+
+> ⚠️ **为什么不能把沾色混进卡片底色：** 材质生效时 `shellBackground()` 返回的是
+> `Color.Transparent` —— 外壳底色**根本不画**。把主题色混进 `HwGlassCardColor.surface`
+> 在 API 26 设备上完全看不到效果（第一版就是这么写的，表现为「开关点了没反应」）。
+> 沾色与底色是两层不同的东西：底色可以被材质让位，沾色必须在材质之上。
+
+> **为什么卡片底色不能沿用 `@Prop cardBackground = HwGlassCardColor.surface` 的默认值：**
+> `@Prop` 的默认值只在**组件构造时**求值一次，之后开关怎么变都不会重新取。
+> 必须订阅一个真正的 AppStorage 键。
+
+这两个开关**都不改变主题色本身**，所以不能指望 `accentColor` 变化来触发刷新 ——
+`applyAppTheme()` 把结果分别发布到 `pageBackground` / `cardSurface`，
+订阅它们的元素才会更新。这是 §7.8 那条依赖规则的直接应用。
 
 **`background` 和 `backgroundDark` 必须同时染。** 页面里的写法是
 `this.isDarkMode ? HwColor.backgroundDark : HwColor.background`，
@@ -619,6 +706,19 @@ HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';   // 约 70% 不�
 **三条缺一不可**：只加 `backgroundBlurStyle` 而底色不透明，模糊根本看不见；
 只调透明而不加模糊，卡片变成一层薄纱但背后什么都没有。
 
+### 7.5.1 材质自带投影，小尺寸芯片要关掉
+
+`ImmersiveMaterial` 的 `applyShadow` **默认为 `true`**，材质会自带一层投影。
+大卡片上这是加分项，但小尺寸芯片（房间筛选、排序、分类切换）上会显得像
+「按钮背后顶了一层影子」。这类地方把 `MaterialCardLayer` 的 `layerShadow` 传 `false`：
+
+```ts
+MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
+```
+
+实现上是在 `SystemMaterial` 里单独缓存了一档不带阴影的材质
+（`applyShadow: false`），而不是关掉全局阴影 —— 卡片的投影要保留。
+
 ### 7.6 `@StorageProp` 只能读，要写回必须用 `@StorageLink`
 
 两者都订阅同一个 `AppStorage` 键，但方向不同：
@@ -653,6 +753,11 @@ applyAppTheme(enabled, this.currentAccent()); // ✓
 排查方式：切一下深色模式开关，如果页面背景从「主题色淡染」变回固定浅蓝，就是这里漏了。
 
 ### 7.8 读 `HwColor` 的属性不会建立依赖 —— 页面底色必须走 `resolvePageBackground()`
+
+> **`@Prop` 的默认值也属于这一类。** `@Prop cardBackground = HwGlassCardColor.surface`
+> 只在**组件构造时**求值一次，之后 token 怎么变都不会重新取。
+> 卡片底色因此改成订阅 `cardSurface`（见 §5.8）。
+> 判断标准一样：**这个值会不会在组件存活期间变化？会，就不能用 `@Prop` 默认值。**
 
 ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是个模块级普通对象：
 读它的属性**不会被登记**，属性变了也不会让任何表达式重新求值。

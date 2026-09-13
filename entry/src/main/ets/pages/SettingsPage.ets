@@ -80,6 +80,8 @@ struct SettingsPage {
   }
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
   @StorageProp('isLargeScreen') isLargeScreen: boolean = false;
   @StorageProp('is2in1') is2in1: boolean = false;
   @StorageLink('pcLayoutEnabled') pcLayoutEnabled: boolean = false;
@@ -162,8 +164,11 @@ struct SettingsPage {
     AppSettingsStore.delete('immersiveLightEnabled');
     AppSettingsStore.delete('cardsFromTop');
     AppSettingsStore.delete('darkModeEnabled');
+    AppSettingsStore.delete('darkModePreference');
     AppSettingsStore.delete('accentKey');
     AppSettingsStore.delete('accentCustom');
+    AppSettingsStore.delete('cardTintEnabled');
+    AppSettingsStore.delete('customAccentFullAccess');
     AppStorage.setOrCreate('hideOfflineDevices', false);
     AppStorage.setOrCreate('selectedHomeId', '');
     AppStorage.setOrCreate('selectedHomeName', '');
@@ -188,8 +193,11 @@ struct SettingsPage {
     AppStorage.setOrCreate('immersiveLightEnabled', true);
     AppStorage.setOrCreate('cardsFromTop', true);
     AppStorage.setOrCreate('darkModeEnabled', false);
+    AppStorage.setOrCreate('darkModePreference', 'system');
     AppStorage.setOrCreate('accentKey', 'harmony');
     AppStorage.setOrCreate('accentCustom', '');
+    AppStorage.setOrCreate('cardTintEnabled', false);
+    AppStorage.setOrCreate('customAccentFullAccess', false);
     AppStorage.setOrCreate('accentColor', '#0A59F7');
     AppStorage.setOrCreate('isDarkMode', false);
     this.hideOfflineDevices = false;
@@ -1021,7 +1029,7 @@ struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

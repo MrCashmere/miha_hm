@@ -257,6 +257,8 @@ struct HomePage {
   @StorageLink('temperatureFahrenheit') @Watch('onTemperatureUnitChanged') temperatureFahrenheit: boolean = false;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
   @StorageLink('infoExcludedDevices') infoExcludedDevices: string[] = [];
   @StorageLink('backgroundImage') wallpaperImage: string = '';
   @StorageLink('infoShowMoreContent') infoShowMoreContent: boolean = true;
@@ -2269,7 +2271,9 @@ struct HomePage {
           .backgroundColor(this.selectedRoomKey === chip.key
             ? this.accent() : withAlpha(HwColor.textPrimary, 0.06))
 
-        MaterialCardLayer({ layerRadius: HwRadius.pill })
+        // 小尺寸芯片关掉材质自带投影：applyShadow 默认为 true，
+        // 那层投影在芯片上看起来就像「按钮背后顶了一层影子」。
+        MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 
         // 内容层：触摸穿透到下层
         Row({ space: HwSpace.xs }) {
@@ -2998,7 +3002,9 @@ struct HomePage {
         .backgroundColor(this.deviceSortMode === mode
           ? this.accent() : withAlpha(HwColor.textPrimary, 0.06))
 
-      MaterialCardLayer({ layerRadius: HwRadius.pill })
+      // 小尺寸芯片关掉材质自带投影：applyShadow 默认为 true，
+      // 那层投影在芯片上看起来就像「按钮背后顶了一层影子」。
+      MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 
       Text(label)
         .fontFamily(this.appFontFamily(label))
@@ -3819,7 +3825,7 @@ struct HomePage {
               .layoutWeight(1)
               .height(46)
               .fontSize(15)
-              .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+              .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
               .fontColor(HwColor.textPrimary)
               .onClick(() => {
                 this.resetDeviceRename();
@@ -4600,7 +4606,7 @@ struct HomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .mode(this.isLargeScreen && !this.pcLayoutEnabled && this.autoMultiColumn ? NavigationMode.Auto : NavigationMode.Stack)
     .titleBar({
       avoidLayoutSafeArea: true,

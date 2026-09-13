@@ -56,6 +56,14 @@ import { HwGlassCardColor, HwRadius } from '../utils/DesignTokens';
 export struct MaterialCardLayer {
   /** 与 MaterialCard 的 cardRadius 保持一致，避免出现内嵌的小圆角边框 */
   @Prop layerRadius: Length = 20;
+  /**
+   * 是否让材质自带投影。
+   *
+   * 材质的 applyShadow 默认为 true。卡片尺寸大、这层投影是加分项；
+   * 但小尺寸芯片（房间筛选等）上它看起来就像「按钮背后顶了一层影子」，
+   * 这类地方传 false。
+   */
+  @Prop layerShadow: boolean = true;
 
   build() {
     Toggle({ type: ToggleType.Button, isOn: false })
@@ -71,7 +79,7 @@ export struct MaterialCardLayer {
       // systemMaterial 放在所有样式属性之后
       .attributeModifier({
         applyNormalAttribute: (instance: ToggleAttribute): void => {
-          applyMaterialCarrier(instance, false);
+          applyMaterialCarrier(instance, false, false, this.layerShadow);
         }
       })
   }
@@ -101,8 +109,22 @@ export struct MaterialCard {
    */
   @StorageProp('accentColor') accentColor: string = '';
 
-  /** 卡片底色。API 26 沉浸光感生效时会被材质覆盖，保留作为降级底色。 */
-  @Prop cardBackground: ResourceColor = HwGlassCardColor.surface;
+  /**
+   * 卡片底色（含可选的「卡片沾色」）。
+   *
+   * 必须走订阅键：`HwGlassCardColor.surface` 是模块级对象的属性，
+   * 直接读它不会被依赖追踪，开关沾色时已经画出来的卡片不会更新。
+   * 原先这里是 `@Prop cardBackground = HwGlassCardColor.surface`，
+   * 默认值只在组件构造时求值一次，同样跟不上开关变化。
+   */
+  @StorageProp('cardSurface') cardSurface: string = '';
+  /**
+   * 卡片沾色叠加层的颜色（空串表示不沾色）。
+   *
+   * 沾色**必须叠在材质之上**，不能混进卡片底色：材质生效时外壳底色是透明的
+   * （见 shellBackground），混进去的主题色根本不会被画出来。
+   */
+  @StorageProp('cardTintColor') cardTint: string = '';
   @Prop cardBorderColor: ResourceColor = HwGlassCardColor.border;
   @Prop cardBorderWidth: number = 1;
   @Prop cardRadius: Length = 20;
@@ -173,6 +195,19 @@ export struct MaterialCard {
     if (this.materialActive()) {
       MaterialCardLayer({ layerRadius: this.cardRadius })
     }
+    if (this.cardTint.length > 0) {
+      // 沾色层：叠在材质之上、内容之下。外壳有 clip(true) + 圆角，会被裁成卡片形状。
+      //
+      // 尺寸必须用 matchParent 而不是 width/height('100%')：百分比在 Stack 内按
+      // **父级可用尺寸**解析，高度会被撑到容器满高，卡片跟着胀大；
+      // matchParent 按父级实测尺寸解析，随内容走（与 MaterialCardLayer 同一写法）。
+      Column()
+        .width(LayoutPolicy.matchParent)
+        .height(LayoutPolicy.matchParent)
+        .backgroundColor(this.cardTint)
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
+    }
     Flex({
       direction: this.cardDirection,
       space: { main: LengthMetrics.vp(this.cardSpace) },
@@ -196,7 +231,10 @@ export struct MaterialCard {
       // 材质生效时必须让出底色，否则底色会垫在材质之下叠出灰感
       return Color.Transparent;
     }
-    return this.cardOpaqueBackground ? this.cardBackground : Color.Transparent;
+    if (!this.cardOpaqueBackground) {
+      return Color.Transparent;
+    }
+    return this.cardSurface.length > 0 ? this.cardSurface : HwGlassCardColor.surface;
   }
 
   /**
@@ -287,6 +325,8 @@ export struct MaterialSheetPanel {
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
   /** 主题色依赖：面板内容大量使用 HwColor.primary，切色时需要重绘 */
   @StorageProp('accentColor') accentColor: string = '';
+  /** 面板底色：与卡片同源，跟随「卡片沾色」开关 */
+  @StorageProp('cardSurface') cardSurface: string = '';
 
   /** 面板上方两角的圆角 */
   @Prop panelRadius: number = HwRadius.card;
@@ -329,7 +369,8 @@ export struct MaterialSheetPanel {
       bottomRight: 0
     })
     // 材质生效时必须让出底色，否则底色会垫在材质之下叠出灰感
-    .backgroundColor(this.materialActive() ? Color.Transparent : HwGlassCardColor.surface)
+    .backgroundColor(this.materialActive() ? Color.Transparent
+      : (this.cardSurface.length > 0 ? this.cardSurface : HwGlassCardColor.surface))
     .clip(true)
   }
 }

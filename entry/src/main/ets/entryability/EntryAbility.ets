@@ -30,7 +30,7 @@ import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { loadCustomFonts } from '../utils/CustomFonts';
-import { applyAppTheme, resolveAccentColor } from '../utils/DesignTokens';
+import { applyAppTheme, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, resolveAccentColor } from '../utils/DesignTokens';
 
 const DOMAIN = 0x0000;
 
@@ -114,12 +114,20 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('cardsFromTop', cardsFromTop);
     AppStorage.setOrCreate('homeSmoothSwitch', homeSmoothSwitch);
     AppStorage.setOrCreate('customFonts', customFonts);
-    // 深色模式：用户在「外观设置」里手动切换过就以开关为准，没切换过则跟随系统。
-    // 1.0.7 及以前一直是跟随系统，保留这个默认值，避免老用户升级后被强制切成浅色。
-    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
+    // 这两个开关要在 applyAppTheme 之前落进 AppStorage：
+    // applyAppTheme 会读它们来决定卡片底色与页面背景是否沾主题色。
+    const cardTintEnabled = AppSettingsStore.getBoolean(CARD_TINT_STORAGE, false);
+    const customAccentFullAccess = AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false);
+    AppStorage.setOrCreate(CARD_TINT_STORAGE, cardTintEnabled);
+    AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, customAccentFullAccess);
+    // 深色模式偏好（三态：跟随系统 / 浅色 / 深色）。旧键迁移在这里做，
+    // 保证后续读到的都是新键；AppStorage 也写一份供设置页双向绑定。
+    const darkModePref = EntryAbility.resolveDarkModePref();
+    AppStorage.setOrCreate(DARK_MODE_PREF_STORAGE, darkModePref);
+    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context, darkModePref);
     // 平台层的配色也要跟应用内保持一致，否则系统控件与自绘颜色会一深一浅
     try {
-      this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModeEnabled));
+      this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModePref));
     } catch (err) {
     }
     // 主题色在启动时就要生效：否则首屏会用默认蓝，切到其它页面才变
@@ -299,9 +307,17 @@ export default class EntryAbility extends UIAbility {
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
-    // 未显式设置过深色模式时跟随系统，设置过则维持用户选择。
+    // 系统深浅色变化时按偏好重新解析：偏好是「跟随系统」就跟着变，否则维持用户选择。
     // 本回调会被 setColorMode 同步触发，存储未就绪时按默认值处理，避免进程崩溃。
-    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
+    const darkModePref = EntryAbility.resolveDarkModePref();
+    AppStorage.setOrCreate(DARK_MODE_PREF_STORAGE, darkModePref);
+    const darkModeEnabled = EntryAbility.resolveDarkMode(this.context, darkModePref);
+    // 开关本身不变，但 AppStorage 可能尚未就绪（本回调会被 setColorMode 同步触发），
+    // 补一次写入，避免 applyAppTheme 读到默认值把卡片/背景染色算错
+    AppStorage.setOrCreate(CARD_TINT_STORAGE,
+      AppSettingsStore.getBoolean(CARD_TINT_STORAGE, false));
+    AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE,
+      AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false));
     // 同样要把已保存的主题色传入，否则系统深浅色变化会把背景染色重置掉
     const accentColor = resolveAccentColor(
       AppSettingsStore.getString('accentKey', 'harmony'),
@@ -311,17 +327,40 @@ export default class EntryAbility extends UIAbility {
   }
 
   /**
-   * 当前是否使用深色模式。
+   * 读深色模式偏好，顺带做一次旧键迁移。
    *
-   * 「外观设置」里切换过深色模式 → 以应用内开关为准；
-   * 从未切换过 → 跟随系统，保持与 1.0.7 一致的行为。
+   * 1.1.0/1.1.1 存的是布尔 `darkModeEnabled`：它一旦被拨动就永久生效、
+   * 再也没法回到「跟随系统」，这正是本次要修的问题。升级时把它映射成
+   * 'dark' / 'light' 并删掉旧键；没有旧键就是全新安装，默认跟随系统。
    */
-  private static resolveDarkMode(context: common.UIAbilityContext): boolean {
+  private static resolveDarkModePref(): string {
     try {
+      const stored = AppSettingsStore.getString(DARK_MODE_PREF_STORAGE, '');
+      if (stored === DARK_MODE_SYSTEM || stored === DARK_MODE_LIGHT || stored === DARK_MODE_DARK) {
+        return stored;
+      }
       if (AppSettingsStore.has('darkModeEnabled')) {
-        return AppSettingsStore.getBoolean('darkModeEnabled', false);
+        const legacy = AppSettingsStore.getBoolean('darkModeEnabled', false);
+        const migrated = legacy ? DARK_MODE_DARK : DARK_MODE_LIGHT;
+        AppSettingsStore.setString(DARK_MODE_PREF_STORAGE, migrated);
+        AppSettingsStore.delete('darkModeEnabled');
+        return migrated;
       }
     } catch (err) {
+    }
+    return DARK_MODE_SYSTEM;
+  }
+
+  /**
+   * 当前是否使用深色模式。
+   * 偏好为「跟随系统」时读系统，其余按偏好取值。
+   */
+  private static resolveDarkMode(context: common.UIAbilityContext, pref: string): boolean {
+    if (pref === DARK_MODE_DARK) {
+      return true;
+    }
+    if (pref === DARK_MODE_LIGHT) {
+      return false;
     }
     return EntryAbility.systemDarkMode(context);
   }
@@ -336,18 +375,20 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
-  /** 用户在应用内显式选过就下发明确模式，没选过则交还给系统 */
-  private static resolveColorMode(darkModeEnabled: boolean): ConfigurationConstant.ColorMode {
-    try {
-      if (!AppSettingsStore.has('darkModeEnabled')) {
-        return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-      }
-    } catch (err) {
-      return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+  /**
+   * 平台配色模式。
+   *
+   * 偏好为「跟随系统」时下发 COLOR_MODE_NOT_SET —— 把配色权交还系统，
+   * 系统切深浅色应用才会跟着走；选了明确值才固定下来。
+   */
+  private static resolveColorMode(pref: string): ConfigurationConstant.ColorMode {
+    if (pref === DARK_MODE_DARK) {
+      return ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     }
-    return darkModeEnabled
-      ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
-      : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+    if (pref === DARK_MODE_LIGHT) {
+      return ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+    }
+    return ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
   }
 
   onForeground(): void {

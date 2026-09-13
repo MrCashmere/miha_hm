@@ -50,6 +50,40 @@ export const ACCENT_CUSTOM_STORAGE: string = 'accentCustom';
 export const ACCENT_CUSTOM_LIST_STORAGE: string = 'accentCustomList';
 
 /**
+ * 深色模式偏好：'system'（跟随系统）/ 'light' / 'dark'。
+ *
+ * 刻意用三态字符串而不是布尔量：布尔量一旦被用户拨动过就永久生效，
+ * **再也没法回到「跟随系统」**——这正是「深色模式不跟随系统」的原因。
+ * 三态让「跟随系统」始终是一个可以选回来的状态。
+ */
+export const DARK_MODE_PREF_STORAGE: string = 'darkModePreference';
+/** 深色模式偏好取值 */
+export const DARK_MODE_SYSTEM: string = 'system';
+export const DARK_MODE_LIGHT: string = 'light';
+export const DARK_MODE_DARK: string = 'dark';
+
+/** 卡片沾色开关：打开后所有卡片底色混入 10% 主题色 */
+export const CARD_TINT_STORAGE: string = 'cardTintEnabled';
+/** 高权限自定义主题色：打开后自定义色也参与页面背景染色（默认只允许内置预设色） */
+export const CUSTOM_ACCENT_FULL_ACCESS_STORAGE: string = 'customAccentFullAccess';
+/** 页面底色广播键：由 applyAppTheme 写入，页面订阅它（见 resolvePageBackground） */
+export const PAGE_BACKGROUND_KEY: string = 'pageBackground';
+/** 卡片底色广播键：由 applyAppTheme 写入，卡片订阅它（见 MaterialCard） */
+export const CARD_SURFACE_KEY: string = 'cardSurface';
+/** 卡片沾色叠加层广播键：空串表示不沾色。沾色必须叠在材质之上，混进底色看不见 */
+export const CARD_TINT_KEY: string = 'cardTintColor';
+
+/** 读一个布尔开关，读取失败时用默认值 */
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const value = AppStorage.get<boolean>(key);
+    return value === undefined ? fallback : value;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+/**
  * 规范化自定义主题色列表：逐项过滤非法值并去重。
  * 持久化内容可能被外部改坏或残留旧版本数据，读入时统一兜底。
  */
@@ -92,7 +126,11 @@ export function withAlpha(color: string, alpha: number): string {
  * 两个参数都必须是调用方声明的订阅变量（`@StorageProp` / `@StorageLink`），
  * 传字面量或普通字段没有意义。
  */
-export function resolvePageBackground(accentColor: string, isDark: boolean): string {
+export function resolvePageBackground(isDark: boolean, background: string): string {
+  if (background.length > 0) {
+    return background;
+  }
+  // 兜底：applyAppTheme 尚未跑过时（理论上不会）退回当前 token
   return isDark ? HwColor.backgroundDark : HwColor.background;
 }
 
@@ -243,7 +281,9 @@ export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   // 浅色 = 主题色与白色按 12% 混合，深色 = 与深底按 18% 混合。
   // 页面用的是 `isDarkMode ? backgroundDark : background`，所以两个都要跟着染。
   const backgroundBaseDark = '#1A2D44';
-  const followed = accentColor.length > 0 && isPresetAccent(accentColor);
+  // 默认只让内置预设色参与背景染色；打开「高权限自定义主题色」后自定义色也放行
+  const fullAccess = readFlag(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false);
+  const followed = accentColor.length > 0 && (isPresetAccent(accentColor) || fullAccess);
   const tintedLight = followed ? mixHex('#FFFFFF', accentColor, 0.12) : '#DCEAF8';
   const tintedDark = followed ? mixHex(backgroundBaseDark, accentColor, 0.18) : backgroundBaseDark;
   HwColor.background = isDark ? tintedDark : tintedLight;
@@ -254,10 +294,21 @@ export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   MijiaSheetBackground = isDark ? '#2A3B58' : '#E3EAF4';
   // 卡片底色留 70% 透明度：沉浸光感不可用时会降级为毛玻璃（backgroundBlurStyle），
   // 不透明的底色会把模糊整个盖住，等于没有降级效果。
+  // 刻意**不把沾色混进这里**：材质生效时外壳底色是透明的（见 MaterialCard.shellBackground），
+  // 混进去的颜色根本不会被画出来。沾色改为叠在材质之上的一层（见 cardTintColor）。
   HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';
   // 卡片描边也跟着主题色走：写死 '#1A3379B7'（旧米家蓝 10% 透明）在切色后会露出蓝边，
   // 而卡片描边本来就该是同色系的淡描边。
   HwGlassCardColor.border = withAlpha(HwColor.primary, 0.1);
+
+  // 发布两个广播键。页面与卡片必须订阅它们而不是直接读 HwColor：
+  // ArkUI 按表达式记录依赖，模块级对象的属性读取不会被登记，
+  // 开关沾色或切主题色时已经画出来的元素不会重新求值（见文档 §7.8）。
+  AppStorage.setOrCreate(PAGE_BACKGROUND_KEY, HwColor.background);
+  AppStorage.setOrCreate(CARD_SURFACE_KEY, HwGlassCardColor.surface);
+  AppStorage.setOrCreate(CARD_TINT_KEY,
+    accentColor.length > 0 && readFlag(CARD_TINT_STORAGE, false)
+      ? withAlpha(accentColor, 0.1) : '');
 }
 
 /** 兼容旧引用（深色主题已回退，保留符号避免遗留编译失败） */

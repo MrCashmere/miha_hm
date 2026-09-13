@@ -21,10 +21,12 @@
 
 import { router, uiAppearance } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { resourceManager } from '@kit.LocalizationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, HwColor, HwRadius, HwSpace, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground } from '../utils/DesignTokens';
+import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, HwColor, HwRadius, HwSpace, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground,
+  withAlpha } from '../utils/DesignTokens';
 import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
@@ -59,6 +61,10 @@ struct AppearanceSettingsPage {
   /** 深色模式。用 @StorageLink 而非 @StorageProp：开关需要写回 AppStorage，
    *  其余页面订阅同一个键，切一下全应用跟着变。 */
   @StorageLink('isDarkMode') isDarkMode: boolean = false;
+  /** 深色模式偏好（三态）：跟随系统 / 浅色 / 深色。默认跟随系统 */
+  @StorageLink('darkModePreference') darkModePref: string = 'system';
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
   @StorageLink('backgroundImage') wallpaperImage: string = '';
   @StorageLink('autoMultiColumn') autoMultiColumn: boolean = false;
   @StorageLink('fontMode') fontMode: string = 'system';
@@ -69,6 +75,10 @@ struct AppearanceSettingsPage {
   @StorageLink('fontWeightMode') fontWeightMode: string = 'system';
   @StorageLink('fontWeightValue') fontWeightValue: number = 400;
   @StorageLink('immersiveLightEnabled') immersiveLightEnabled: boolean = true;
+  /** 卡片沾色：打开后所有卡片底色混入 10% 主题色 */
+  @StorageLink('cardTintEnabled') cardTintEnabled: boolean = false;
+  /** 高权限自定义主题色：打开后自定义色也参与页面背景染色 */
+  @StorageLink('customAccentFullAccess') customAccentFullAccess: boolean = false;
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
   @StorageLink('customFonts') customFonts: string[] = [];
   /** 主题色：预设 key（harmony/rose/custom） */
@@ -432,15 +442,54 @@ struct AppearanceSettingsPage {
     return resolveAccentColor(this.accentKey, this.accentCustom);
   }
 
+  /** 卡片沾色开关 */
+  private setCardTint(enabled: boolean): void {
+    AppSettingsStore.setBoolean(CARD_TINT_STORAGE, enabled);
+    AppStorage.setOrCreate(CARD_TINT_STORAGE, enabled);
+    // 这两个开关只改 token、不改主题色本身，不能指望 accentColor 变化来触发刷新：
+    // applyAppTheme 会把卡片底色与页面底色分别发布到 cardSurface / pageBackground，
+    // 订阅了这两个键的元素才会跟着更新。
+    reloadAppTheme();
+    FeedbackLogService.recordOperation('UI', `卡片沾色 ${enabled ? '开' : '关'}`);
+  }
+
+  /** 高权限自定义主题色开关 */
+  private setCustomAccentFullAccess(enabled: boolean): void {
+    AppSettingsStore.setBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, enabled);
+    AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, enabled);
+    reloadAppTheme();
+    FeedbackLogService.recordOperation('UI', `高权限自定义主题色 ${enabled ? '开' : '关'}`);
+  }
+
   /**
    * 切换深色模式。
    *
-   * 这里写入 `darkModeEnabled` 之后，启动逻辑就会以应用内开关为准、不再跟随系统。
-   * 同时要把平台配色一起下发，否则系统控件（弹窗、输入法等）会和自绘颜色一深一浅。
+   * 三态偏好：`system` 跟随系统、`light` / `dark` 固定。
+   * 同时要把平台配色一起下发，否则系统控件（弹窗、输入法等）会和自绘颜色一深一浅 ——
+   * **跟随系统时必须下发 `COLOR_MODE_NOT_SET`**，下发明确值会被钉死在当前深浅色上。
    */
-  private setDarkMode(enabled: boolean): void {
-    // 写入这个键之后，启动逻辑就会以应用内开关为准，不再跟随系统
-    AppSettingsStore.setBoolean('darkModeEnabled', enabled);
+  private setDarkModePref(pref: string): void {
+    this.darkModePref = pref;
+    AppSettingsStore.setString(DARK_MODE_PREF_STORAGE, pref);
+    AppStorage.setOrCreate(DARK_MODE_PREF_STORAGE, pref);
+    // 跟随系统时读一次系统当前值，否则直接用偏好
+    const enabled = pref === DARK_MODE_DARK ? true
+      : (pref === DARK_MODE_LIGHT ? false : this.systemDarkMode());
+    this.applyDarkMode(enabled, pref);
+  }
+
+  /** 读系统当前深浅色（偏好为「跟随系统」时用） */
+  private systemDarkMode(): boolean {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const config = ctx.getApplicationContext().resourceManager.getConfigurationSync();
+      return config.colorMode === resourceManager.ColorMode.DARK;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  private applyDarkMode(enabled: boolean, pref: string): void {
     // HwColor 是模块级对象，改属性不会触发任何刷新，所以改完必须广播订阅键。
     // 必须把当前主题色一并传入：背景色是按主题色染的，只传 isDark 会把染色重置回默认。
     applyAppTheme(enabled, this.currentAccent());
@@ -452,13 +501,16 @@ struct AppearanceSettingsPage {
     AppStorage.setOrCreate('accentCustom', this.accentCustom);
     AppStorage.setOrCreate('accentColor', this.accentColor);
     try {
-      (getContext(this) as common.UIAbilityContext).getApplicationContext().setColorMode(
-        enabled ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
-                : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
-      );
+      // 跟随系统必须下发 NOT_SET 把配色权交还系统，否则会被钉死在当前值上
+      const mode = pref === DARK_MODE_DARK
+        ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+        : (pref === DARK_MODE_LIGHT
+          ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+          : ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+      (getContext(this) as common.UIAbilityContext).getApplicationContext().setColorMode(mode);
     } catch (err) {
     }
-    FeedbackLogService.recordOperation('UI', `切换深色模式 ${enabled ? '开' : '关'}`);
+    FeedbackLogService.recordOperation('UI', `深色模式偏好 ${pref}`);
   }
 
   /**
@@ -469,6 +521,34 @@ struct AppearanceSettingsPage {
    *   - 角标是 MaterialCard 的**兄弟节点**而不是子节点。ArkUI 的点击会向父级冒泡，
    *     做成子节点的话点删除会连带触发一次选中；做成兄弟节点后两者互不干扰。
    */
+  /** 深色模式三态芯片：结构与首页排序芯片一致（自绘底色 + 材质承载 + 文字穿透） */
+  @Builder
+  darkModeChip(mode: string, label: string) {
+    Stack() {
+      Row()
+        .width(LayoutPolicy.matchParent)
+        .height(LayoutPolicy.matchParent)
+        .borderRadius(HwRadius.pill)
+        .backgroundColor(this.darkModePref === mode
+          ? this.accentOrPrimary() : withAlpha(HwColor.textPrimary, 0.06))
+
+      // 小尺寸芯片关掉材质自带投影
+      MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
+
+      Text(label)
+        .fontFamily(this.appFontFamily(label))
+        .fontWeight(this.appFontWeight())
+        .fontSize(13)
+        .fontColor(this.darkModePref === mode ? '#FFFFFF' : HwColor.textPrimary)
+        .padding({ left: 16, right: 16, top: 7, bottom: 7 })
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
+    }
+    .onClick((): void => {
+      this.setDarkModePref(mode);
+    })
+  }
+
   @Builder
   accentSwatch(key: string, color: string, label: string, selected: boolean, removable: boolean) {
     Stack({ alignContent: Alignment.TopEnd }) {
@@ -799,27 +879,36 @@ struct AppearanceSettingsPage {
                   .padding({ left: 4, right: 4 })
               }
 
-              // 深色模式：切换过就以开关为准，没切换过则跟随系统（启动时由 EntryAbility 决定初值）
-              MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
+              // 深色模式：三态而不是开关。开关一旦拨动就永久生效、再也回不到
+              // 「跟随系统」——那正是「深色模式不跟随系统」的原因。
+              MaterialCard({
+                cardPadding: HwSpace.lg,
+                cardRadius: HwRadius.card,
+                cardSpace: HwSpace.md,
+                cardAlignItems: ItemAlign.Start
+              }) {
                 Column({ space: 4 }) {
                   Text('深色模式')
                     .fontFamily(this.appFontFamily('深色模式'))
                     .fontWeight(this.appFontWeight())
                     .fontSize(15)
                     .fontColor(HwColor.textPrimary)
-                  Text('关闭后固定使用浅色界面，不再跟随系统')
-                    .fontFamily(this.appFontFamily('关闭后固定使用浅色界面，不再跟随系统'))
+                  Text('选择「跟随系统」时随系统深浅色自动切换')
+                    .fontFamily(this.appFontFamily('选择「跟随系统」时随系统深浅色自动切换'))
                     .fontWeight(this.appFontWeight())
                     .fontSize(12)
                     .fontColor(HwColor.textSecondary)
                 }
                 .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
-                Toggle({ type: ToggleType.Switch, isOn: this.isDarkMode })
-                  .selectedColor(this.accentOrPrimary())
-                  .onChange((isOn: boolean) => {
-                    this.setDarkMode(isOn);
-                  })
+                .width('100%')
+
+                Row({ space: HwSpace.sm }) {
+                  this.darkModeChip(DARK_MODE_SYSTEM, '跟随系统')
+                  this.darkModeChip(DARK_MODE_LIGHT, '浅色')
+                  this.darkModeChip(DARK_MODE_DARK, '深色')
+                }
+                .width('100%')
+                .alignItems(VerticalAlign.Center)
               }
 
               if (isApi26OrAbove()) {
@@ -896,6 +985,65 @@ struct AppearanceSettingsPage {
                 this.addAccentSwatch()
               }
               .width('100%')
+            }
+
+            // 主题色的延伸选项：两个开关都只改 token，不动主题色本身
+            MaterialCard({
+              cardPadding: HwSpace.lg,
+              cardRadius: HwRadius.card,
+              cardSpace: HwSpace.md,
+              cardAlignItems: ItemAlign.Start
+            }) {
+              Row({ space: HwSpace.md }) {
+                Column({ space: 4 }) {
+                  Text('卡片沾色')
+                    .fontFamily(this.appFontFamily('卡片沾色'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(15)
+                    .fontColor(HwColor.textPrimary)
+                  Text('开启后所有卡片底色混入 10% 主题色')
+                    .fontFamily(this.appFontFamily('开启后所有卡片底色混入 10% 主题色'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(12)
+                    .fontColor(HwColor.textSecondary)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.cardTintEnabled })
+                  .selectedColor(this.accentOrPrimary())
+                  .onChange((isOn: boolean): void => {
+                    this.setCardTint(isOn);
+                  })
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+
+              Divider()
+                .color('#14000000')
+
+              Row({ space: HwSpace.md }) {
+                Column({ space: 4 }) {
+                  Text('高权限自定义主题色')
+                    .fontFamily(this.appFontFamily('高权限自定义主题色'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(15)
+                    .fontColor(HwColor.textPrimary)
+                  Text('默认只有内置主题色会染到页面背景；开启后自定义颜色也会')
+                    .fontFamily(this.appFontFamily('默认只有内置主题色会染到页面背景；开启后自定义颜色也会'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(12)
+                    .fontColor(HwColor.textSecondary)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.customAccentFullAccess })
+                  .selectedColor(this.accentOrPrimary())
+                  .onChange((isOn: boolean): void => {
+                    this.setCustomAccentFullAccess(isOn);
+                  })
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
             }
 
             MaterialCard({ cardDirection: FlexDirection.Row, cardPadding: HwSpace.lg, cardRadius: HwRadius.card, cardSpace: 12 }) {
@@ -1261,7 +1409,7 @@ struct AppearanceSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

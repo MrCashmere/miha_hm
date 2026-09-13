@@ -70,6 +70,8 @@ struct FamilySelectPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageProp('isDarkMode') isDarkMode: boolean = false;
+  /** 页面底色（由 applyAppTheme 发布）。订阅它而不是读 HwColor 属性，见 docs/ThemeColor.md §7.8 */
+  @StorageProp('pageBackground') pageBackground: string = '';
 
   /** 主题色变了：HwColor 是模块级对象，改属性不会触发刷新，靠这里重建页面 */
   onAccentColorChanged(): void {
@@ -250,7 +252,7 @@ struct FamilySelectPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+    .backgroundColor(resolvePageBackground(this.isDarkMode, this.pageBackground))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();
