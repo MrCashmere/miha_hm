@@ -38,6 +38,19 @@ const PRESS_GLOW_RADIUS: number = 64;
  * 再浓就变成往卡片上刷了一层主题色。
  */
 const PRESS_GLOW_ALPHA: number = 0.32;
+/**
+ * 溢出光晕的半径与浓度（vp）。
+ *
+ * 这层是**卡片外**那圈光：它铺到相邻卡片的边缘上，隔着对方的玻璃透出来，
+ * 看起来就是「光打在邻卡边缘的反光」。刻意**不抬高 zIndex**，
+ * 让后画的相邻卡片盖住它——盖住之后只剩透过玻璃的一点亮度，
+ * 不会把邻卡内部照亮（这是抽掉「描边式外发光」的原因）。
+ */
+const PRESS_SPILL_RADIUS: number = 110;
+/** 比手指光斑淡得多：它是溢出到别人身上的光，不该抢主角 */
+const PRESS_SPILL_ALPHA: number = 0.14;
+/** 溢出光晕的画布边长，理由同 §7.9：必须 ≥ 2×半径，否则光斑被画布直边切断 */
+const PRESS_SPILL_SIZE: number = PRESS_SPILL_RADIUS * 2;
 
 /**
  * 卡片沉浸光感承载层。
@@ -195,11 +208,31 @@ export struct MaterialCard {
    *
    * `glowOn` 手指是否落在卡片上，`glowX/glowY` 光斑中心（相对卡片左上角，vp）。
    * 用 `@State`：它们是渲染属性，必须触发重绘才会出现、移动、消失。
-   * 刻意**不记录卡片尺寸**：光斑层是 matchParent，坐标天然就是相对卡片左上角的。
    */
   @State glowOn: boolean = false;
   @State glowX: number = 0;
   @State glowY: number = 0;
+  /**
+   * 坐标换算用的一组普通字段（不参与渲染，所以不用 @State）。
+   *
+   * 光要**跟着手指在屏幕上走**，而触摸事件给的是窗口坐标：必须减去卡片自身
+   * 在窗口中的原点才能换算成卡片内坐标。
+   *   - `cardWinX/Y`：卡片左上角在窗口中的位置。按下那一瞬由
+   *     `windowX - x` 反推得到（这时组件内坐标一定是准的），之后靠
+   *     `onAreaChange` 的**位移增量**维护——列表滚动时卡片在动，增量必须跟上，
+   *     否则手指不动、页面滚动，光斑就会黏在卡片原处不动。
+   *   - `lastTouchWinX/Y`：最近一次触摸的窗口坐标，卡片位置变了要拿它重算。
+   *   - `lastAreaX/Y` + `areaReady`：上一次 onAreaChange 报的全局坐标，用来求增量。
+   *     只取增量、不用绝对值：`globalPosition` 的原点与 `windowX/Y` 未必是同一套，
+   *     但两者在滚动中的**变化量**必然一致。
+   */
+  private cardWinX: number = 0;
+  private cardWinY: number = 0;
+  private lastTouchWinX: number = 0;
+  private lastTouchWinY: number = 0;
+  private lastAreaX: number = 0;
+  private lastAreaY: number = 0;
+  private areaReady: boolean = false;
 
   /** 对应原卡片容器上的 .onClick()。 */
   cardOnClick: () => void = (): void => {
@@ -287,9 +320,28 @@ export struct MaterialCard {
     if (event.touches.length === 0) {
       return;
     }
-    this.glowX = event.touches[0].x;
-    this.glowY = event.touches[0].y;
+    const touch = event.touches[0];
+    if (event.type === TouchType.Down) {
+      // 按下这一瞬 `x/y` 一定是相对当前卡片位置的准确值，用它反推卡片原点
+      this.cardWinX = touch.windowX - touch.x;
+      this.cardWinY = touch.windowY - touch.y;
+    }
+    this.lastTouchWinX = touch.windowX;
+    this.lastTouchWinY = touch.windowY;
+    this.syncGlowPosition();
     this.glowOn = true;
+  }
+
+  /**
+   * 用最近一次触摸的窗口坐标重算光斑位置。
+   *
+   * 手指不动、页面在滚（惯性滑动、或手指按住后列表继续走）时也要调用它，
+   * 所以 `onAreaChange` 里同样会调——这正是「光效追随手指而不是留在卡片原处」
+   * 与「卡片自己移动了但手指没动」这两种情况的分界。
+   */
+  private syncGlowPosition(): void {
+    this.glowX = this.lastTouchWinX - this.cardWinX;
+    this.glowY = this.lastTouchWinY - this.cardWinY;
   }
 
   /**
@@ -308,8 +360,59 @@ export struct MaterialCard {
     ];
   }
 
+  /**
+   * 溢出光晕的径向渐变色标。比手指光斑更柔、更淡。
+   */
+  private spillGradientColors(): Array<[ResourceColor, number]> {
+    const accent = this.glowAccent();
+    return [
+      [withAlpha(accent, PRESS_SPILL_ALPHA), 0],
+      [withAlpha(accent, PRESS_SPILL_ALPHA * 0.72), 0.35],
+      [withAlpha(accent, PRESS_SPILL_ALPHA * 0.28), 0.68],
+      [Color.Transparent, 1]
+    ];
+  }
+
+  /**
+   * 溢出到卡片之外的那圈光。
+   *
+   * 画布比卡片大得多、以手指为圆心，靠一个 **0 尺寸锚点** 甩到卡片外面去
+   * （见 §7.9：直接放一个比父容器大的子节点会把卡片撑大）。
+   * 它在 cardBody 里排在最前面，卡内那半被上面的材质层盖住，
+   * 只有漏到卡片外的部分看得见——于是相邻卡片边缘会透出一点亮，
+   * 而邻卡内部不会被照亮。
+   */
+  @Builder
+  glowSpillLayer() {
+    if (this.glowVisible()) {
+      Stack() {
+        Column()
+          .width(PRESS_SPILL_SIZE)
+          .height(PRESS_SPILL_SIZE)
+          .position({
+            x: this.glowX - PRESS_SPILL_RADIUS,
+            y: this.glowY - PRESS_SPILL_RADIUS
+          })
+          .radialGradient({
+            center: [PRESS_SPILL_RADIUS, PRESS_SPILL_RADIUS],
+            radius: PRESS_SPILL_RADIUS,
+            colors: this.spillGradientColors()
+          })
+          .hitTestBehavior(HitTestMode.None)
+          .accessibilityLevel('no')
+      }
+      .width(0)
+      .height(0)
+      .position({ x: 0, y: 0 })
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no')
+    }
+  }
+
   @Builder
   cardBody() {
+    // 溢出光晕在最底层：卡内部分由上面的材质层盖住，只留卡片外那圈
+    this.glowSpillLayer()
     if (this.materialActive()) {
       MaterialCardLayer({ layerRadius: this.cardRadius })
     }
@@ -394,6 +497,9 @@ export struct MaterialCard {
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
+        // 外壳不再 clip（要放行溢出光晕），所以这一层自己带圆角，
+        // 光斑到卡片圆角处收住，接上材质边缘的折射
+        .borderRadius(this.cardRadius)
         .radialGradient({
           center: [this.glowX, this.glowY],
           radius: PRESS_GLOW_RADIUS,
@@ -422,9 +528,23 @@ export struct MaterialCard {
     .backgroundColor(this.shellBackground())
     .backgroundBlurStyle(this.shellBlurStyle())
     .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
-    // 必须保留：流光、沾色层、材质层都靠这一层连同圆角一起裁成卡片形状。
-    // 尤其是流光——它只该在卡片里被玻璃折射，绝不能漏到相邻卡片内部去。
-    .clip(true)
+    // 刻意**不设 clip(true)**：溢出光晕要漏到卡片外面去，clip 会把它整圈切掉。
+    // 需要裁切的每一层都自己带圆角（材质层、沾色层、手指光斑），效果等价。
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.lastAreaX;
+      const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.lastAreaY;
+      if (this.areaReady) {
+        // 只取增量：卡片被滚动带走时光斑要跟着手指重算，不然会黏在卡片原处
+        this.cardWinX += gx - this.lastAreaX;
+        this.cardWinY += gy - this.lastAreaY;
+        if (this.glowOn) {
+          this.syncGlowPosition();
+        }
+      }
+      this.lastAreaX = gx;
+      this.lastAreaY = gy;
+      this.areaReady = true;
+    })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
       this.updatePressGlow(event);
@@ -464,7 +584,20 @@ export struct MaterialCard {
     .backgroundColor(this.shellBackground())
     .backgroundBlurStyle(this.shellBlurStyle())
     .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
-    .clip(true)
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.lastAreaX;
+      const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.lastAreaY;
+      if (this.areaReady) {
+        this.cardWinX += gx - this.lastAreaX;
+        this.cardWinY += gy - this.lastAreaY;
+        if (this.glowOn) {
+          this.syncGlowPosition();
+        }
+      }
+      this.lastAreaX = gx;
+      this.lastAreaY = gy;
+      this.areaReady = true;
+    })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
       this.updatePressGlow(event);
