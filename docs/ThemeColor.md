@@ -435,6 +435,20 @@ Slider({ value: v, min: 0, max: 100, style: SliderStyle.OutSet })
 > `MaterialCardLayer` / `IconCircleButton` 里的 `Toggle` 是材质承载层，不是开关，
 > 它们的 `selectedColor(Color.Transparent)` 是刻意的，**不要**改成主题色。
 
+**底部 `HdsTabs` 的图标高亮也要单独下发。** 它不是 `Toggle`，也没有 `selectedColor`，
+高亮色写在 `BottomTabBarStyle` 的 `SymbolGlyphModifier` 里：
+
+```ts
+// HomePage.tabBarStyle()
+const homeSelected = new SymbolGlyphModifier($r('sys.symbol.house_fill'));
+homeSelected.fontColor([this.accent()]);      // ← 不能写 HwColor.primary
+return new BottomTabBarStyle({ normal: homeNormal, selected: homeSelected }, '首页');
+```
+
+> ⚠️ 这里写 `HwColor.primary` 就是 §7.8 那个坑的另一个实例：
+> 模块级对象的属性读取登记不上依赖，`tabBarStyle()` 不会重新求值，
+> **换主题色后底栏高亮会一直停在上一套配色**，重启才恢复。
+
 ### 5.3 输入框光标
 
 ```ts
@@ -902,6 +916,8 @@ ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是�
 | 取主题色 | `this.accentOrPrimary()` / `this.accent()`（内部读 `accentColor`） |
 | 页面底色 | `resolvePageBackground(this.accentColor, this.isDarkMode)` |
 | 直接写 `HwColor.primary` | 只在**不依赖主题色变化**的地方可接受（如按压态等瞬时样式，每次应用时重新读取） |
+| 底栏图标高亮 | `tabBarStyle()` 里用 `this.accent()` 拼 `SymbolGlyphModifier`（见 §5.2） |
+| 流光颜色 | `pressLightColor(订阅的开关, 订阅的主题色)`，纯函数、订阅值由调用方传入（见 §5.9） |
 
 顺带一提，历史上有 `MaterialCard` 挂一个零尺寸的 `AccentColorSentinel` 来"提供依赖"的做法。
 它能让**卡片内部**的表达式重算，但**不会**让页面根节点的属性重新求值——
@@ -937,9 +953,10 @@ ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是�
 
 | 文件 | 职责 |
 | --- | --- |
-| `utils/DesignTokens.ets` | 主题色全部核心逻辑 + `HwColor` 可变 token 容器 |
-| `components/MaterialCard.ets` | `MaterialCard` / `MaterialSheetPanel` / `MaterialCardLayer` / `AccentColorSentinel` |
-| `pages/AppearanceSettingsPage.ets` | 主题色选择 UI（预设 + 自定义 + 删除）+ 深色模式开关 |
+| `utils/DesignTokens.ets` | 主题色全部核心逻辑 + `HwColor` 可变 token 容器 + `onAccentColor` |
+| `utils/SystemMaterial.ets` | 沉浸光感材质与 `pressLightColor`（流光取色） |
+| `components/MaterialCard.ets` | `MaterialCard`（含跟手流光）/ `MaterialSheetPanel` / `MaterialCardLayer` / `AccentColorSentinel` |
+| `pages/AppearanceSettingsPage.ets` | 主题色选择 UI（预设 + 自定义 + 删除）+ 深色模式开关 + 主题色流光开关 |
 | `entryability/EntryAbility.ets` | 启动时解析并下发主题色与深色模式（`resolveDarkMode` / `resolveColorMode`） |
 | `storage/AppSettingsStore.ets` | `preferences` 读写（`has` / `getStringArray` / `setStringArray`） |
 
@@ -951,4 +968,8 @@ ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是�
 onAccentColorChanged(): void { reloadAppTheme(); }
 // 根 Stack 里再挂一个零尺寸的 AccentColorSentinel()
 ```
+
+需要**整页重建**才能生效的地方（例如底栏的 `BottomTabBarStyle`）不靠 sentinel：
+只要对应的表达式里读到了 `this.accentColor`，ArkUI 就会把那个元素标脏并重新求值，
+这也是 §5.2 里底栏高亮必须写 `this.accent()` 而不是 `HwColor.primary` 的原因。
 

@@ -105,21 +105,29 @@ export struct MaterialCardLayer {
 | ④ | `enabled(false)` 等 | 承载层抢走焦点与点击，内容点不动 |
 | ⑤ | `attributeModifier` 放末尾 | 材质被后面的样式属性覆盖 |
 
-### 用法：Stack 里三层
+### 用法：Stack 里分层
 
 ```ts
 Stack() {
-  MaterialCardLayer({ layerRadius: HwRadius.card })   // 底层：材质
-  Column() { /* 内容 */ }                              // 上层：内容
+  this.glowSpillLayer()                                // ① 溢出光晕（见第 9 节，卡内部分被材质盖住）
+  MaterialCardLayer({ layerRadius: HwRadius.card })    // ② 材质
+  Column() { /* 沾色层 */ }                             // ③ 可选：卡片沾色
+  this.pressGlowLayer()                                // ④ 跟手光斑（见第 9 节）
+  Column() { /* 内容 */ }                               // ⑤ 内容
 }
-.width('100%')
-.borderRadius(HwRadius.card)
-.clip(true)                                            // 让材质被圆角裁切
+.width(this.cardWidth)
+.borderRadius(this.cardRadius)
+// 刻意**不设 clip(true)**：溢出光晕要漏到卡片外面去，clip 会把它整圈切掉
 ```
+
+> ⚠️ **外壳一旦不 clip，需要裁切的每一层都要自己带圆角。**
+> `MaterialCardLayer` 一直有 `borderRadius`；沾色层与跟手光斑层也要各给一个
+> `borderRadius(this.cardRadius)`，否则它们会在卡片四角露出直角。
+> 只有半模态面板（`MaterialSheetPanel`）仍然用 `clip(true)`，它不需要往外溢光。
 
 ---
 
-## 5. 三条层级规则
+## 5. 四条层级规则
 
 官方《沉浸光感常见问题》里三条硬规则，踩过每一条：
 
@@ -129,7 +137,11 @@ Stack() {
 2. **`systemMaterial` 要放在其他样式属性（背景色、边框、阴影）之后设置。**
    → 所以用 `attributeModifier` 挂在属性链最末，而不是直接 `.systemMaterial(...)` 写在中间。
 
-3. **弹窗面板也不例外。** `bindSheet` 的 `backgroundColor` 默认值是 `Color.White`，
+3. **材质不采样同一 `Stack` 里的兄弟节点。** 把内容画在材质**之下**（更早的兄弟节点），
+   真机上完全看不见——`systemMaterial` 采样的是组件背后的窗口内容，不是同层兄弟。
+   所以流光只能压在材质**之上**，不能指望穿过去被玻璃折射。
+
+4. **弹窗面板也不例外。** `bindSheet` 的 `backgroundColor` 默认值是 `Color.White`，
    不显式放开的话材质同样被白底盖住：
 
    ```ts
@@ -188,9 +200,10 @@ export function applyMaterialCarrier(
   instance: CommonAttribute,
   fallbackBlur: boolean = true,
   interactive: boolean = false,
-  withShadow: boolean = true
+  withShadow: boolean = true,
+  lightColor: string = ''      // 流光颜色，空串 = 系统默认白光（见第 9 节）
 ): void {
-  const material = getImmersiveMaterial(interactive, withShadow);
+  const material = getImmersiveMaterial(interactive, withShadow, lightColor);
   if (immersiveEnabled() && material !== null) {
     instance.systemMaterial(material);
   } else if (fallbackBlur) {
@@ -222,7 +235,81 @@ MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 
 ---
 
-## 9. 常见坑清单
+## 9. 流光：按压时的光效
+
+沉浸光感的按压反馈有两处，颜色都由设置页的**「主题色流光」**开关
+（`immersivePressGlow`，默认开）统一控制：开 = 主题色，关 = 系统默认白光。
+
+### 9.1 卡片上的跟手光晕
+
+分两层，都在 `MaterialCard.cardBody` 里：
+
+| 层 | 尺寸 | 层级 | 作用 |
+| --- | --- | --- | --- |
+| 跟手光斑 | `matchParent` + 自带圆角 | 材质之上、内容之下 | 手指底下那团光，被卡片圆角收住 |
+| 溢出光晕 | 比卡片大一圈（0 尺寸锚点放置） | 最底层 | 卡与卡之间的缝隙里能看到一点辉光 |
+
+要点：
+
+- **坐标走窗口坐标系。** 触摸事件给的是 `windowX/windowY`，要减去卡片自身在窗口中的
+  原点才能换算成卡片内坐标。卡片原点在 `Down` 那一瞬由 `windowX - x` 反推
+  （这时组件内坐标一定准），之后靠 `onAreaChange` 报的 `globalPosition`
+  **位移增量**维护。
+  > 直接用 `touches[0].x/y`（组件内坐标）在**页面滚动**时会有问题：列表被滚动带走、
+  > 手指没动，组件内坐标却跟着变，光斑看着就黏在卡片原处。
+- `Down` / `Move` 都要处理（滑动时跟着走），`Up` / `Cancel` 必须熄灭。
+- 光斑是一层 `radialGradient`，由内到外三档淡出；只用一档实色会得到硬边圆盘。
+- **溢出光晕不能抬 `zIndex`**：让后画的相邻卡片盖住它，只留透过玻璃的一点亮度；
+  抬起来就变成给邻卡糊了一层主题色。
+
+### 9.2 流光颜色必须由调用方传进来
+
+```ts
+/** 纯函数：空串 = 不指定颜色、用系统默认白光 */
+export function pressLightColor(themedLightOn: boolean, accentColor: string): string
+```
+
+**刻意做成纯函数、由调用方把订阅值传进来**，和 `resolvePageBackground()` 同一个理由：
+ArkUI 的局部更新按表达式记录依赖，函数里直接 `AppStorage.get(...)` 是登记不上的，
+拨开关或切主题色时已经画出来的按钮 / 卡片不会重新求值，流光会停在旧颜色上。
+
+### 9.3 可交互材质按流光颜色缓存
+
+`lightEffect.color` 默认是 `Color.White`。要换成主题色，只能在
+`interactive: true` 那一档材质上带 `lightEffect`：
+
+```ts
+const lightOptions: uiMaterial.LightEffectOptions = {};   // 必须带类型标注，不能写成三元里的对象字面量
+if (lightColor.length > 0) {
+  lightOptions.color = lightColor;
+}
+new uiMaterial.ImmersiveMaterial({
+  style: materialStyle(),
+  interactive: true,
+  lightEffect: lightOptions
+});
+```
+
+颜色随主题色变，一个固定变量装不下，所以这一档材质用 `Map` **按颜色缓存**。
+
+### 9.4 底部 HdsTab 悬浮栏的流光
+
+这个光由 `HdsTabs` 自己绘制，不归应用的材质管，必须**单独下发**：
+
+```ts
+.barFloatingStyle({
+  // ...
+  lightColor: this.tabLightColor()      // 读订阅变量后由 pressLightColor() 决定
+})
+```
+
+底栏的触摸被 `HdsTabs` 整段吃掉，挂在页面根节点上的 `onTouch` 一个事件都收不到；
+要监听底栏上的手势，只能在底栏那一条带子上另盖一层
+`HitTestMode.Transparent` 的透明层（自己也响应、但不阻塞下面的兄弟节点）。
+
+---
+
+## 10. 常见坑清单
 
 | 坑 | 表现 | 正确做法 |
 | --- | --- | --- |
@@ -230,13 +317,16 @@ MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 | **材质在模块加载期构造** | 低版本设备**启动即闪退** | 惰性求值。`export const X = uiMaterial.ImmersiveStyle.THIN` 这种写法会在模块加载期解引用 API 26 才有的接口，抛出的异常在任何 `try/catch` 之外，直接让模块加载失败 |
 | **不透明底色** | 材质看不见 | 承载层与外层外壳都用 `Color.Transparent` |
 | **内容层不设 `hitTestBehavior`** | 承载层收不到点击、按压流光不响应 | 内容层加 `.hitTestBehavior(HitTestMode.None)` |
-| **圆角不透传** | 卡片里出现内嵌的小圆角边框 | 承载层 `borderRadius` 与外壳一致，外壳再 `clip(true)` |
-| **多档材质共用一个缓存** | 关掉阴影的那档把带阴影的覆盖了 | 每种组合各自缓存（`materialCache` / `interactiveMaterialCache` / `flatMaterialCache`） |
+| **圆角不透传** | 卡片里出现内嵌的小圆角边框 | 承载层 `borderRadius` 与外壳一致；外壳不 clip 时，沾色层 / 光斑层也要各带一个圆角 |
+| **多档材质共用一个缓存** | 关掉阴影的那档把带阴影的覆盖了 | 各自缓存：静态 `materialCache`、去阴影 `flatMaterialCache`、可交互按流光颜色存 `Map` |
+| **`attributeModifier` 写成内联对象字面量** | 切主题色 / 拨开关后已画出来的组件不更新 | 写成方法调用（`this.carrierModifier()`）并在里面读订阅变量：读发生在渲染期才登记得上依赖，闭包体不在渲染期执行，读什么都登记不上 |
+| **溢出的层直接当卡片子节点** | 比卡片大的子节点会把卡片**撑大**（`Stack` 尺寸取最大子节点，`position` 不改布局尺寸） | 放进 `.width(0).height(0)` 的锚点容器，或用「同尺寸层 + 挪渐变圆心」的写法 |
+| **把量尺寸的节点放进条件渲染里** | 条件依赖它量出来的尺寸 → 永远不成立，效果一次都不出现 | 负责测量的节点**必须无条件渲染**，只把「画什么」放进条件里 |
 | **`Material.empty`** | 失败被伪装成静默失效 | 构造失败返回 `null`，让调用方走降级路径 |
 
 ---
 
-## 10. 应用级前置条件
+## 11. 应用级前置条件
 
 ```json5
 // entry/src/main/module.json5 —— 只有写在 entry 类型的 module 中才生效
@@ -255,30 +345,35 @@ MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 
 ---
 
-## 11. 怎么验证
+## 12. 怎么验证
 
 **诊断文案**：「外观设置 → 全局沉浸光感」下方会显示一行，形如：
 
 ```
-API=26 材质=已构造 系统状态=ENABLE 应用开关=开 承载=下发材质
+API=26 材质=已构造 状态=非DISABLE 开关=开 流光=#0A59F7 承载=下发材质
 ```
 
-把各段判定条件摊开，一眼能看出卡在哪一环（API 版本、材质构造、系统总开关、应用开关）。
+把各段判定条件摊开，一眼能看出卡在哪一环（API 版本、材质构造、系统总开关、
+应用开关、当前流光颜色）。
+
+> ⚠️ 这两个入参（开关与主题色）也要由调用方把**订阅值**传进来，
+> 函数内部直接读 `AppStorage` 的话，这行诊断不会随切色 / 拨开关刷新，
+> 会停在上一档，看着像没生效。
 
 **判定「承载层是否真的挂上了材质」**：材质生效时无法直接读回，
 但可以看视觉结果 —— 承载层区域应该出现通透的玻璃质感，而不是纯色。
 
 ---
 
-## 12. 复用清单
+## 13. 复用清单
 
 把光感搬到别的工程时，只需要这四个文件：
 
 | 文件 | 职责 |
 | --- | --- |
-| `utils/SystemMaterial.ets` | `applyMaterialCarrier` / `getImmersiveMaterial` / `isApi26OrAbove` / `sheetSystemMaterial` / `sheetBlurStyle` / `materialDiagnostics` |
-| `components/MaterialCard.ets` | `MaterialCardLayer`（承载层）、`MaterialCard`（卡片外壳）、`MaterialSheetPanel`（弹窗面板） |
-| `components/IconCircleButton.ets` | 圆形按钮：Toggle 承载 + `SymbolGlyph` 叠加 |
+| `utils/SystemMaterial.ets` | `applyMaterialCarrier` / `getImmersiveMaterial` / `isApi26OrAbove` / `pressLightColor` / `sheetSystemMaterial` / `sheetBlurStyle` / `materialDiagnostics` |
+| `components/MaterialCard.ets` | `MaterialCardLayer`（承载层）、`MaterialCard`（卡片外壳 + 跟手流光）、`MaterialSheetPanel`（弹窗面板）、`AccentColorSentinel` |
+| `components/IconCircleButton.ets` | 圆形按钮：Toggle 承载 + `SymbolGlyph` 叠加 + 主题色流光 |
 | `entry/src/main/module.json5` | 应用级 `metadata` 开关 |
 
 移植时按顺序做：
@@ -287,4 +382,6 @@ API=26 材质=已构造 系统状态=ENABLE 应用开关=开 承载=下发材质
 2. 复制 `MaterialCardLayer`，五条属性一条都别删；
 3. 把现有卡片的 `Column` + `backgroundColor` 换成 `Stack { MaterialCardLayer + Column }`；
 4. 检查每个 `bindSheet` 都设了 `backgroundColor: Color.Transparent`；
-5. 给降级路径补 `backgroundBlurStyle` + 半透明底色。
+5. 给降级路径补 `backgroundBlurStyle` + 半透明底色；
+6. 需要按压流光的话，照第 9 节加 `pressLightColor` 与两层光斑，
+   并给底栏单独下发 `lightColor`。
