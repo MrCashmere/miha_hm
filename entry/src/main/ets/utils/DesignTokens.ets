@@ -32,8 +32,20 @@ export interface AccentPreset {
 }
 
 /**
+ * 默认主题色（= 预设首位的鸿蒙蓝）。
+ *
+ * 未设置过主题色、存储读失败、自定义色非法，一律落到这一档。
+ * 刻意只留 `key`/`value` 两个常量而**不再单列一个「默认色」预设**：
+ * 默认色本身就该是鸿蒙蓝，多摆一个同名不同色的色块只会让人分不清
+ * 到底哪个才是默认。「鸿蒙蓝」这个名字保持不变。
+ */
+export const DEFAULT_ACCENT_KEY: string = 'harmony';
+/** 默认主题色的值：鸿蒙蓝 */
+export const DEFAULT_ACCENT_VALUE: string = '#0A59F7';
+
+/**
  * 主题色预设。
- * - harmony：鸿蒙默认蓝（HarmonyOS 品牌色）
+ * - harmony：鸿蒙默认蓝（HarmonyOS 品牌色），也是默认值
  * - rose   ：昔涟粉
  * - custom ：用户在设置里输入 RRGGBB
  */
@@ -66,6 +78,13 @@ export const DARK_MODE_DARK: string = 'dark';
 export const CARD_TINT_STORAGE: string = 'cardTintEnabled';
 /** 高权限自定义主题色：打开后自定义色也参与页面背景染色（默认只允许内置预设色） */
 export const CUSTOM_ACCENT_FULL_ACCESS_STORAGE: string = 'customAccentFullAccess';
+/**
+ * 沉浸光感「主题色流光」开关。
+ *
+ * 开启：按压卡片 / 圆形图标按钮的流光与光晕用主题色；
+ * 关闭：回到系统默认的白色流光（即改动前的观感）。
+ */
+export const PRESS_GLOW_STORAGE: string = 'immersivePressGlow';
 /** 页面底色广播键：由 applyAppTheme 写入，页面订阅它（见 resolvePageBackground） */
 export const PAGE_BACKGROUND_KEY: string = 'pageBackground';
 /** 卡片底色广播键：由 applyAppTheme 写入，卡片订阅它（见 MaterialCard） */
@@ -157,6 +176,21 @@ export function mixHex(base: string, tint: string, ratio: number): string {
 }
 
 /**
+ * 是否是内置预设的 key（`custom` 不是预设，返回 false）。
+ *
+ * 与按颜色判定的 `isPresetAccent` 不同：这里判的是设置里存的那个 key，
+ * 用来给存储兜底——旧版本或异常写入可能留下一个已经不存在的 key。
+ */
+export function isPresetAccentKey(key: string): boolean {
+  for (let i = 0; i < ACCENT_PRESETS.length; i++) {
+    if (ACCENT_PRESETS[i].key === key) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 是否是内置预设主题色。
  *
  * 页面背景只跟随预设色：自定义色是用户随手输的，
@@ -197,7 +231,7 @@ export function normalizeAccentHex(input: string): string {
 
 /**
  * 按当前设置解析主题色。
- * 预设命中则用预设值；未命中（custom）时用自定义值，自定义非法则回落到鸿蒙蓝。
+ * 预设命中则用预设值；未命中（custom）时用自定义值，自定义非法则回落到默认主题色。
  */
 export function resolveAccentColor(accentKey: string, customHex: string): string {
   for (let i = 0; i < ACCENT_PRESETS.length; i++) {
@@ -206,11 +240,11 @@ export function resolveAccentColor(accentKey: string, customHex: string): string
     }
   }
   const normalized = normalizeAccentHex(customHex);
-  return normalized.length > 0 ? normalized : '#0A59F7';
+  return normalized.length > 0 ? normalized : DEFAULT_ACCENT_VALUE;
 }
 
 export const HwColor: HwColorPalette = {
-  primary: '#3379B7',         // 米家蓝
+  primary: DEFAULT_ACCENT_VALUE, // 鸿蒙蓝（默认主题色，切色后由 applyAppTheme 覆盖）
   background: '#DCEAF8',      // 浅蓝主背景
   backgroundDark: '#1A2D44',  // 深色背景（暗色模式）
   surface: '#FFFFFF',         // 白卡
@@ -249,7 +283,7 @@ export let MijiaSheetBackground: string = '#E3EAF4';
  */
 export function reloadAppTheme(): void {
   let isDark = false;
-  let accentKey = 'harmony';
+  let accentKey = DEFAULT_ACCENT_KEY;
   let accentCustom = '';
   try {
     isDark = AppStorage.get<boolean>('isDarkMode') === true;
@@ -297,8 +331,9 @@ export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   // 刻意**不把沾色混进这里**：材质生效时外壳底色是透明的（见 MaterialCard.shellBackground），
   // 混进去的颜色根本不会被画出来。沾色改为叠在材质之上的一层（见 cardTintColor）。
   HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';
-  // 卡片描边也跟着主题色走：写死 '#1A3379B7'（旧米家蓝 10% 透明）在切色后会露出蓝边，
-  // 而卡片描边本来就该是同色系的淡描边。
+  // 卡片描边也跟着主题色走：原先写死的是把**米家蓝**按 10% 透明硬编进去的字面量，
+  // 切主题色后会露出旧蓝边；卡片描边本来就该是同色系的淡描边。
+  // 这里只留一个与默认主题色同色的占位值，真实值由 applyAppTheme 派生。
   HwGlassCardColor.border = withAlpha(HwColor.primary, 0.1);
 
   // 发布两个广播键。页面与卡片必须订阅它们而不是直接读 HwColor：
@@ -370,6 +405,6 @@ export interface HwGlassCardPalette {
 
 export const HwGlassCardColor: HwGlassCardPalette = {
   surface: '#E8F0F8',
-  // 占位值，真实值由 applyAppTheme 按主题色派生（见下）
-  border: '#1A3379B7'
+  // 占位值（默认主题色 10% 透明），真实值由 applyAppTheme 按主题色派生（见下）
+  border: '#1A0A59F7'
 };

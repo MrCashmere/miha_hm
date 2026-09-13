@@ -20,8 +20,24 @@
  */
 
 import { LengthMetrics } from '@kit.ArkUI';
-import { applyMaterialCarrier, isApi26OrAbove } from '../utils/SystemMaterial';
-import { HwGlassCardColor, HwRadius } from '../utils/DesignTokens';
+import { applyMaterialCarrier, isApi26OrAbove, pressLightColor } from '../utils/SystemMaterial';
+import { HwGlassCardColor, HwRadius, withAlpha } from '../utils/DesignTokens';
+
+/**
+ * 流光光晕的半径（vp）。
+ *
+ * 流光不是描边：它是**跟着手指走的一小团柔光**（HdsTab 那种），
+ * 手指滑到哪、光就落在哪。半径必须收着给：130 那种尺寸会盖住大半张卡片，
+ * 看起来像「整卡高亮选中」而不是一点光；64 大致是一枚指腹的范围。
+ */
+const PRESS_GLOW_RADIUS: number = 64;
+/**
+ * 光晕中心浓度。
+ *
+ * 光本身不该是一块实色。压到 0.3 出头是「照亮玻璃表面」，
+ * 再浓就变成往卡片上刷了一层主题色。
+ */
+const PRESS_GLOW_ALPHA: number = 0.32;
 
 /**
  * 卡片沉浸光感承载层。
@@ -110,6 +126,15 @@ export struct MaterialCard {
   @StorageProp('accentColor') accentColor: string = '';
 
   /**
+   * 主题色流光开关（只用来建立依赖）。
+   *
+   * 真正取色走 `pressLightColor()`，它读的是 AppStorage。ArkUI 按表达式登记依赖：
+   * 不声明这个订阅键，拨动开关时已经画出来的卡片不会重新求值，
+   * 光晕要等下一次重建才生效。
+   */
+  @StorageProp('immersivePressGlow') pressGlowSwitch: boolean = true;
+
+  /**
    * 卡片底色（含可选的「卡片沾色」）。
    *
    * 必须走订阅键：`HwGlassCardColor.surface` 是模块级对象的属性，
@@ -165,6 +190,17 @@ export struct MaterialCard {
    */
   @Prop cardAlignItems: ItemAlign = ItemAlign.Center;
 
+  /**
+   * 流光状态。
+   *
+   * `glowOn` 手指是否落在卡片上，`glowX/glowY` 光斑中心（相对卡片左上角，vp）。
+   * 用 `@State`：它们是渲染属性，必须触发重绘才会出现、移动、消失。
+   * 刻意**不记录卡片尺寸**：光斑层是 matchParent，坐标天然就是相对卡片左上角的。
+   */
+  @State glowOn: boolean = false;
+  @State glowX: number = 0;
+  @State glowY: number = 0;
+
   /** 对应原卡片容器上的 .onClick()。 */
   cardOnClick: () => void = (): void => {
   };
@@ -190,24 +226,112 @@ export struct MaterialCard {
     return this.cardMaterialEnabled && this.immersiveLightEnabled && isApi26OrAbove();
   }
 
+  /**
+   * 是否用「主题色流光」替代系统的白色按压高亮。
+   *
+   * 要求三件事同时成立：本卡承载材质、开了主题色流光开关、能取到主题色。
+   * 任一条不成立就完全沿用原来的行为（系统 HoverEffect.Highlight 白光），
+   * 所以这个开关关掉时观感与改动前一致。
+   */
+  private themedLightAvailable(): boolean {
+    return this.materialActive()
+      && pressLightColor(this.pressGlowSwitch, this.accentColor).length > 0;
+  }
+
+  /** 主题色流光当前是否可用（主题色 + 开关 + 材质都在）。空串表示不可用 */
+  private glowAccent(): string {
+    if (!this.cardEnabled || !this.themedLightAvailable()) {
+      return '';
+    }
+    return pressLightColor(this.pressGlowSwitch, this.accentColor);
+  }
+
+  /** 是否正在显示跟手光晕 */
+  private glowVisible(): boolean {
+    return this.glowOn && this.glowAccent().length > 0;
+  }
+
+  /**
+   * 实际下发的悬停/按压效果。
+   *
+   * 主题色流光可用时**必须把 HoverEffect.Highlight 摘掉**：
+   * 那是系统画的一层白光，会和主题色流光同时出现，颜色对不上。
+   * 判定只看「流光可不可用」，不能掺进按压状态——否则按下的瞬间
+   * 状态一变、白光又会闪一下。
+   */
+  private effectiveHoverEffect(): HoverEffect {
+    return this.themedLightAvailable() ? HoverEffect.None : this.cardHoverEffect;
+  }
+
+  /**
+   * 跟手滑动的流光。
+   *
+   * 触摸坐标用的是 `touches[0].x/y`——它相对**绑定 onTouch 的组件**（卡片外壳），
+   * 正好就是光晕层要用的坐标系（光晕锚点就贴在卡片左上角）。
+   *
+   * Move 也要处理：流光之所以像「光」而不像「按下高亮」，
+   * 就在于手指在卡片上滑动时它会跟着走。
+   * 抬起与取消都必须熄灭，否则会在卡片上留一块不会消失的光斑。
+   */
+  private updatePressGlow(event: TouchEvent): void {
+    if (this.glowAccent().length === 0) {
+      return;
+    }
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.glowOn = false;
+      return;
+    }
+    if (event.type !== TouchType.Down && event.type !== TouchType.Move) {
+      return;
+    }
+    if (event.touches.length === 0) {
+      return;
+    }
+    this.glowX = event.touches[0].x;
+    this.glowY = event.touches[0].y;
+    this.glowOn = true;
+  }
+
+  /**
+   * 光晕的径向渐变色标。
+   *
+   * 由内到外三档淡出：中心最亮、中段已经散开、到半径处完全透明。
+   * 只用一档实色会得到一个硬边圆盘，看着像贴纸而不是光。
+   */
+  private glowGradientColors(): Array<[ResourceColor, number]> {
+    const accent = this.glowAccent();
+    return [
+      [withAlpha(accent, PRESS_GLOW_ALPHA), 0],
+      [withAlpha(accent, PRESS_GLOW_ALPHA * 0.55), 0.42],
+      [withAlpha(accent, PRESS_GLOW_ALPHA * 0.18), 0.72],
+      [Color.Transparent, 1]
+    ];
+  }
+
   @Builder
   cardBody() {
     if (this.materialActive()) {
       MaterialCardLayer({ layerRadius: this.cardRadius })
     }
     if (this.cardTint.length > 0) {
-      // 沾色层：叠在材质之上、内容之下。外壳有 clip(true) + 圆角，会被裁成卡片形状。
+      // 沾色层：叠在材质之上、内容之下。
       //
       // 尺寸必须用 matchParent 而不是 width/height('100%')：百分比在 Stack 内按
       // **父级可用尺寸**解析，高度会被撑到容器满高，卡片跟着胀大；
       // matchParent 按父级实测尺寸解析，随内容走（与 MaterialCardLayer 同一写法）。
+      //
+      // 圆角自己给一份：外壳的 clip 已经把它裁成卡片形状，这里再给一次圆角，
+      // 两层都圆角就不会出现「外壳圆角、内层直角」的毛边。
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
+        .borderRadius(this.cardRadius)
         .backgroundColor(this.cardTint)
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no')
     }
+    // 流光压在材质之上、内容之下：光打在玻璃表面，文字仍然压在光上面保持清晰
+    this.pressGlowLayer()
     Flex({
       direction: this.cardDirection,
       space: { main: LengthMetrics.vp(this.cardSpace) },
@@ -249,58 +373,115 @@ export struct MaterialCard {
     return this.materialActive() ? BlurStyle.NONE : BlurStyle.Thin;
   }
 
-  build() {
-    // 两个分支只差一个 bindMenu，合并成一处以免后续改属性时漏改一个分支
-    if (this.cardMenuItems.length > 0) {
-      Stack() {
-        this.cardBody()
-      }
-      .width(this.cardWidth)
-      .margin(this.cardMargin)
-      .borderRadius(this.cardRadius)
-      .backgroundColor(this.shellBackground())
-      .backgroundBlurStyle(this.shellBlurStyle())
-      .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
-      .clip(true)
-      .hoverEffect(this.cardHoverEffect)
-      .focusable(this.cardFocusable)
-      .enabled(this.cardEnabled)
-      .opacity(this.cardOpacity)
-      .onClick(() => {
-        this.cardOnClick();
-      })
-      .gesture(
-        LongPressGesture()
-          .onAction((): void => {
-            this.cardOnLongPress();
-          })
-      )
-      .bindMenu(this.cardMenuItems)
-    } else {
-      Stack() {
-        this.cardBody()
-      }
-      .width(this.cardWidth)
-      .margin(this.cardMargin)
-      .borderRadius(this.cardRadius)
-      .backgroundColor(this.shellBackground())
-      .backgroundBlurStyle(this.shellBlurStyle())
-      .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
-      .clip(true)
-      .hoverEffect(this.cardHoverEffect)
-      .focusable(this.cardFocusable)
-      .enabled(this.cardEnabled)
-      .opacity(this.cardOpacity)
-      .onClick(() => {
-        this.cardOnClick();
-      })
-      .gesture(
-        LongPressGesture()
-          .onAction((): void => {
-            this.cardOnLongPress();
-          })
-      )
+  /**
+   * 跟手流光层。
+   *
+   * 三点约束（都是真机调出来的）：
+   *   1. **尺寸跟随卡片**（matchParent）：光斑只落在卡片里，绝不溢到相邻卡片内部；
+   *      超出卡片的部分由外壳的 `clip(true)` 连同圆角一起裁掉——
+   *      这一点与底部 HdsTab 的流光一致，它在滑动时同样不会漏到栏外。
+   *   2. **压在材质之上、内容之下**：光打在玻璃表面上，到卡片圆角边缘被裁断，
+   *      接上材质自己那圈边缘折射，才是液态玻璃的观感。
+   *      实测**不能放在材质之下**：沉浸光感材质不采样同一 Stack 里的兄弟节点，
+   *      光会被整层盖住，真机上完全看不见。
+   *   3. **只覆盖手指周围一小片**：见 PRESS_GLOW_RADIUS，光斑大了就成了整卡高亮。
+   *
+   * `hitTestBehavior(None)` 保证它不吃触摸。
+   */
+  @Builder
+  pressGlowLayer() {
+    if (this.glowVisible()) {
+      Column()
+        .width(LayoutPolicy.matchParent)
+        .height(LayoutPolicy.matchParent)
+        .radialGradient({
+          center: [this.glowX, this.glowY],
+          radius: PRESS_GLOW_RADIUS,
+          colors: this.glowGradientColors()
+        })
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
     }
+  }
+
+  /**
+   * 卡片外壳（无菜单）。
+   *
+   * 与下面的 `cardShellWithMenu` 只差末尾一个 `.bindMenu`：**改属性时两处都要改**。
+   * ArkTS 不能在 @Builder 调用后面继续链式加属性，也没法条件绑定 bindMenu，
+   * 所以这段重复躲不掉。
+   */
+  @Builder
+  cardShell() {
+    Stack() {
+      this.cardBody()
+    }
+    .width(this.cardWidth)
+    .margin(this.cardMargin)
+    .borderRadius(this.cardRadius)
+    .backgroundColor(this.shellBackground())
+    .backgroundBlurStyle(this.shellBlurStyle())
+    .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
+    // 必须保留：流光、沾色层、材质层都靠这一层连同圆角一起裁成卡片形状。
+    // 尤其是流光——它只该在卡片里被玻璃折射，绝不能漏到相邻卡片内部去。
+    .clip(true)
+    .hoverEffect(this.effectiveHoverEffect())
+    .onTouch((event: TouchEvent): void => {
+      this.updatePressGlow(event);
+    })
+    .focusable(this.cardFocusable)
+    .enabled(this.cardEnabled)
+    .opacity(this.cardOpacity)
+    .onClick(() => {
+      this.cardOnClick();
+    })
+    .gesture(
+      LongPressGesture()
+        .onAction((): void => {
+          this.cardOnLongPress();
+        })
+    )
+  }
+
+  build() {
+    // 两个分支只差一个 bindMenu：bindMenu 不能条件绑定，只能分开写。
+    // 属性全部收在 cardShell 里，这里只补 bindMenu，避免两份属性列表各自漂移。
+    if (this.cardMenuItems.length > 0) {
+      this.cardShellWithMenu()
+    } else {
+      this.cardShell()
+    }
+  }
+
+  @Builder
+  cardShellWithMenu() {
+    Stack() {
+      this.cardBody()
+    }
+    .width(this.cardWidth)
+    .margin(this.cardMargin)
+    .borderRadius(this.cardRadius)
+    .backgroundColor(this.shellBackground())
+    .backgroundBlurStyle(this.shellBlurStyle())
+    .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
+    .clip(true)
+    .hoverEffect(this.effectiveHoverEffect())
+    .onTouch((event: TouchEvent): void => {
+      this.updatePressGlow(event);
+    })
+    .focusable(this.cardFocusable)
+    .enabled(this.cardEnabled)
+    .opacity(this.cardOpacity)
+    .onClick(() => {
+      this.cardOnClick();
+    })
+    .gesture(
+      LongPressGesture()
+        .onAction((): void => {
+          this.cardOnLongPress();
+        })
+    )
+    .bindMenu(this.cardMenuItems)
   }
 }
 

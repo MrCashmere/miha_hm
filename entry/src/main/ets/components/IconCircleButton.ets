@@ -19,7 +19,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { applyMaterialCarrier } from '../utils/SystemMaterial';
+import { applyMaterialCarrier, pressLightColor } from '../utils/SystemMaterial';
 
 /**
  * 圆形沉浸光感图标按钮。
@@ -34,8 +34,8 @@ import { applyMaterialCarrier } from '../utils/SystemMaterial';
  *
  * 灵动反馈（类 HdsTab）来自《沉浸式系统材质视效》：
  *   - `interactive: true`：按压弹性形变，松手自动恢复；
- *   - `lightEffect`：手指触摸时流光跟随。
- * 由 `buttonInteractive` 控制，默认关闭。
+ *   - `lightEffect`：手指触摸时流光跟随，颜色默认白、可按主题色下发。
+ * 由 `buttonInteractive` 控制，默认开启。
  *
  * 两条硬要求（《沉浸光感常见问题》）：
  *   - 材质层级在 `backgroundColor` 之下 → 必须显式设 `Color.Transparent`；
@@ -54,6 +54,15 @@ export struct IconCircleButton {
    * 的支持。若开启后发现材质整块消失，说明该设备不支持，把这里改回 `false`。
    */
   @Prop buttonInteractive: boolean = true;
+  /**
+   * 主题色流光依赖。
+   *
+   * 流光的颜色由 `applyMaterialCarrier` 在挂载材质时按主题色下发，
+   * 而属性修饰器只在组件重建时才会重新执行。这里订阅主题色与流光开关，
+   * 拨动开关或切色时本组件重建一次，流光颜色才会跟着换。
+   */
+  @StorageProp('accentColor') accentColor: string = '';
+  @StorageProp('immersivePressGlow') pressGlowSwitch: boolean = true;
   /**
    * 是否为刷新类按钮：为 true 时图标持续旋转，表示「正在加载」。
    *
@@ -109,6 +118,24 @@ export struct IconCircleButton {
     this.spinAngle = 0;
   }
 
+  /**
+   * 材质承载修饰器。
+   *
+   * **必须写成方法并在 build 里调用**，不能把对象字面量直接塞进
+   * `.attributeModifier({...})`：流光的颜色要在这里现读订阅变量
+   * （主题色 + 主题色流光开关），读发生在渲染期才会被登记成依赖，
+   * 拨开关或切主题色时本组件才会重建、重新下发带色材质。
+   * 写成内联字面量的话闭包体不在渲染期执行，读什么都登记不上。
+   */
+  private carrierModifier(): AttributeModifier<ToggleAttribute> {
+    const lightColor = pressLightColor(this.pressGlowSwitch, this.accentColor);
+    return {
+      applyNormalAttribute: (instance: ToggleAttribute): void => {
+        applyMaterialCarrier(instance, false, this.buttonInteractive, true, lightColor);
+      }
+    };
+  }
+
   build() {
     Stack() {
       // 材质 + 交互层：ToggleType.Button
@@ -124,11 +151,7 @@ export struct IconCircleButton {
         .selectedColor(Color.Transparent)
         .enabled(this.buttonEnabled)
         // systemMaterial 放在所有样式属性之后
-        .attributeModifier({
-          applyNormalAttribute: (instance: ToggleAttribute): void => {
-            applyMaterialCarrier(instance, false, this.buttonInteractive);
-          }
-        })
+        .attributeModifier(this.carrierModifier())
         .onChange(() => {
           this.onAction();
         })

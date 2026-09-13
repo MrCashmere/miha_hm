@@ -20,7 +20,7 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
+import { DEFAULT_ACCENT_KEY, DEFAULT_ACCENT_VALUE, HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 // 卡片已全部改为 MaterialCard 承载光感，旧的修饰器不再需要；
 // sheet 仍走同一套系统材质，所以保留这两个。
 import { sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
@@ -169,6 +169,7 @@ struct SettingsPage {
     AppSettingsStore.delete('accentCustom');
     AppSettingsStore.delete('cardTintEnabled');
     AppSettingsStore.delete('customAccentFullAccess');
+    AppSettingsStore.delete('immersivePressGlow');
     AppStorage.setOrCreate('hideOfflineDevices', false);
     AppStorage.setOrCreate('selectedHomeId', '');
     AppStorage.setOrCreate('selectedHomeName', '');
@@ -194,11 +195,12 @@ struct SettingsPage {
     AppStorage.setOrCreate('cardsFromTop', true);
     AppStorage.setOrCreate('darkModeEnabled', false);
     AppStorage.setOrCreate('darkModePreference', 'system');
-    AppStorage.setOrCreate('accentKey', 'harmony');
+    AppStorage.setOrCreate('accentKey', DEFAULT_ACCENT_KEY);
     AppStorage.setOrCreate('accentCustom', '');
     AppStorage.setOrCreate('cardTintEnabled', false);
     AppStorage.setOrCreate('customAccentFullAccess', false);
-    AppStorage.setOrCreate('accentColor', '#0A59F7');
+    AppStorage.setOrCreate('immersivePressGlow', true);
+    AppStorage.setOrCreate('accentColor', DEFAULT_ACCENT_VALUE);
     AppStorage.setOrCreate('isDarkMode', false);
     this.hideOfflineDevices = false;
     this.dualColumnMode = false;

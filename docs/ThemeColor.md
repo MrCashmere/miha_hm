@@ -67,6 +67,19 @@ export const ACCENT_PRESETS: AccentPreset[] = [
 ];
 ```
 
+**默认主题色就是预设首位的「鸿蒙蓝」**，另有两个常量固定这一档的含义：
+
+```ts
+export const DEFAULT_ACCENT_KEY: string = 'harmony';
+export const DEFAULT_ACCENT_VALUE: string = '#0A59F7';
+```
+
+> ⚠️ **不要为「默认色」单列一个预设。** 曾经试过在预设首位插一个名为「默认色」的色块
+> （值是应用早期的米家蓝 `#3379B7`），结果是设置页同时出现「默认色」和「鸿蒙蓝」两个蓝，
+> 用户分不清哪个才是默认，主色还与应用其它部分的配色对不上。
+> 「默认」是一个**语义**，不是一个颜色：它就该等于预设首位那一档，直接复用即可。
+> 米家蓝 `#3379B7` 及其各种透明变体（`#1A3379B7` 等）已全部从代码中移除。
+
 ### 3.2 校验与派生工具
 
 ```ts
@@ -106,7 +119,7 @@ export function resolveAccentColor(accentKey: string, customHex: string): string
 
 ```ts
 export const HwColor: HwColorPalette = {
-  primary: '#3379B7',        // ← 主题色就写在这里
+  primary: DEFAULT_ACCENT_VALUE,   // 鸿蒙蓝；切色后由 applyAppTheme 覆盖
   background: '#DCEAF8',
   surface: '#FFFFFF',
   textPrimary: '#1A1A1A',
@@ -592,6 +605,47 @@ cardBody() {
 `this.isDarkMode ? HwColor.backgroundDark : HwColor.background`，
 只改前者的话暗色模式下背景纹丝不动。
 
+### 5.9 「主题色流光」：按压时的跟手光晕
+
+沉浸光感的按压反馈有两处，颜色都由设置页的**「主题色流光」**开关（`immersivePressGlow`，默认开）
+统一控制：开启时用主题色，关闭时回到系统默认的白光。
+
+**（1）卡片上的跟手光晕**（`MaterialCard`）。
+
+- 触摸坐标用 `TouchEvent.touches[0].x/y`，它相对**绑定 `onTouch` 的组件**，
+  也就是卡片外壳，天然就是光斑要用的坐标系。
+- `Down` / `Move` 都要处理：流光之所以像「光」而不像「按下高亮」，
+  就在于手指在卡片上滑动时它跟着走。`Up` / `Cancel` 必须熄灭，
+  否则会留一块不会消失的光斑。
+- 光斑是一层 `radialGradient`，由内到外三档淡出；只用一档实色会得到一个硬边圆盘。
+- 层级：**材质之上、内容之下**。光打在玻璃表面，文字仍压在光上面保持清晰。
+
+```ts
+@Builder
+cardBody() {
+  if (this.materialActive()) {
+    MaterialCardLayer({ layerRadius: this.cardRadius })
+  }
+  if (this.cardTint.length > 0) { /* 沾色层，见 §5.8 */ }
+  this.pressGlowLayer()          // ← 流光：材质之上、内容之下
+  Flex({ ... }) { this.cardContent() }
+}
+```
+
+**（2）底部 HdsTab 悬浮栏的流光。** 这个光由 `HdsTabs` 自己绘制，
+不归应用的材质管，必须**单独下发**：
+
+```ts
+.barFloatingStyle({
+  // ...
+  lightColor: this.tabLightColor()      // 读订阅变量后由 pressLightColor() 决定
+})
+```
+
+> ⚠️ `pressLightColor(themedLightOn, accentColor)` 刻意做成**纯函数、由调用方把订阅值传进来**，
+> 和 `resolvePageBackground()` 同一个理由：函数里直接 `AppStorage.get()` 登记不上依赖，
+> 拨开关或切主题色时已经画出来的按钮 / 卡片 / 底栏不会重新求值，流光会停在旧颜色上（见 §7.8）。
+
 ---
 
 ## 6. 移植步骤清单
@@ -629,11 +683,13 @@ cardBody() {
 
 仓库里曾有 `'#263379B7'`、`'#1A3379B7'` 这类把旧米家蓝硬编进去的半透明色，
 切主题色后选中态会露出蓝底。一律改用 `withAlpha(HwColor.primary, α)`。
+（这类字面量现已全部清出仓库，`grep -rn '3379B7' entry/src/main/ets/` 应为空。）
 
 注意 **`const` 对象也要在 `applyAppTheme()` 里重新赋值**，否则同样不会跟着变：
 
 ```ts
-export const HwGlassCardColor: HwGlassCardPalette = { surface: '#E8F0F8', border: '#1A3379B7' };
+// 只留一个与默认主题色同色的占位值，真实值由 applyAppTheme 派生
+export const HwGlassCardColor: HwGlassCardPalette = { surface: '#E8F0F8', border: '#1A0A59F7' };
 
 export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   // ...
@@ -648,7 +704,7 @@ grep -rn "'#[0-9A-Fa-f]\{8\}'" entry/src/main/ets/   # 半透明字面量
 ```
 
 命中的不全是问题（`'#1A000000'` 这种中性半透明黑是刻意的），
-但凡是**带色相**的（如 `#1A3379B7`）都需要改成 `withAlpha(主题色, α)`。
+但凡是**带色相**的（如 `#1A0A59F7`）都需要改成 `withAlpha(主题色, α)`。
 
 ### 7.2 `@Watch` 不负责刷新
 
@@ -791,6 +847,30 @@ ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是�
 顺带一提，历史上有 `MaterialCard` 挂一个零尺寸的 `AccentColorSentinel` 来"提供依赖"的做法。
 它能让**卡片内部**的表达式重算，但**不会**让页面根节点的属性重新求值——
 页面自己的底色还是得走 `resolvePageBackground()`。
+
+---
+
+### 7.9 比父容器大的子节点会把父容器撑大
+
+流光最初写成一个比卡片大一圈的层、用 `.position()` 甩到卡片外面，想让它溢出去照亮相邻卡片。
+结果是**按下时卡片自己变大**：`Stack` 的尺寸取最大子节点，`position` 只改摆放位置、
+不改布局尺寸，多出来的那一圈全算进了卡片。
+
+正确做法有两条路，按需求选：
+
+- **光要留在卡片里**（本项目最终采用，见 §5.9）：光斑层用 `LayoutPolicy.matchParent`，
+  超出部分交给外壳的 `clip(true)` 连同圆角一起裁掉。既然不越界，就不存在撑大问题。
+- **光必须溢出到卡片外**：把溢出内容放进一个 `.width(0).height(0)` 的锚点容器，
+  再在锚点里用 `position` 摆放。锚点自身不占地方，卡片量尺寸时不会被带大。
+
+### 7.10 沉浸光感材质不采样同一 `Stack` 里的兄弟节点
+
+流光的层级一度放在材质**之下**，想让材质那层玻璃滤镜把它折射开。
+真机结果是**完全看不见**：`systemMaterial` 采样的是组件背后的窗口内容，
+并不会把同一 `Stack` 里先画的兄弟节点当成背景。
+
+结论：压在材质之上的层才看得见。想让光有「液态玻璃」的观感，
+靠的是卡片圆角的裁切加上材质自身的边缘折射，而不是把光塞到材质底下。
 
 ---
 

@@ -125,6 +125,12 @@ if member_bad:
 # ---- 4. 模块级初始化（低版本设备闪退元凶）----
 DECL = re.compile(r'^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_]\w*)\s*(?::[^=]+)?=\s*(.+)$')
 SAFE = re.compile(r'^(?:[\'"`\d\[\{]|true$|false$|null$|undefined$)')
+# ES 内建构造器：纯语言层，取不到任何平台 API，模块加载期调用不可能闪退。
+# 只有这一类才放行；`uiMaterial.*` / `deviceInfo.*` 这种平台 API 必须继续拦。
+BUILTIN_CTORS = frozenset((
+    'Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON',
+    'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'RegExp', 'Error'
+))
 init_bad = []
 for f in FILES:
     text = strip_comments(load(f))
@@ -136,7 +142,7 @@ for f in FILES:
             if m and not SAFE.match(m.group(2).strip()):
                 calls = [c for c in re.findall(
                     r'\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(', m.group(2))
-                    if c not in ('Array', 'Object', 'String', 'Number', 'Boolean', 'Math', 'JSON')
+                    if c not in BUILTIN_CTORS
                     and c not in local]
                 if calls:
                     init_bad.append(f'{f}:{n}  {m.group(1)} = {m.group(2).strip()[:60]}  调用 {calls}')

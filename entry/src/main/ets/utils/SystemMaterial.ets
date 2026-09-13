@@ -21,6 +21,7 @@
 
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { uiMaterial } from '@kit.ArkUI';
+import { PRESS_GLOW_STORAGE } from './DesignTokens';
 
 /**
  * 沉浸光感（systemMaterial）实现说明
@@ -101,10 +102,15 @@ export function isSystemMaterialDisabled(): boolean {
 let materialError: string = '';
 let materialCache: uiMaterial.Material | null = null;
 let materialResolved: boolean = false;
-let interactiveMaterialCache: uiMaterial.Material | null = null;
-let interactiveMaterialResolved: boolean = false;
 let flatMaterialCache: uiMaterial.Material | null = null;
 let flatMaterialResolved: boolean = false;
+/**
+ * 可交互材质按**流光颜色**缓存。
+ *
+ * 流光颜色随主题色变，一个固定变量装不下；这里用 Map 以颜色为键缓存，
+ * 空串代表「系统默认白光」。颜色种类有限（预设 + 用户自定义），不会无限增长。
+ */
+const interactiveMaterials: Map<string, uiMaterial.Material | null> = new Map();
 
 /**
  * 材质厚薄档位，集中一处便于按真机观感调档。
@@ -138,22 +144,35 @@ function materialStyle(): uiMaterial.ImmersiveStyle {
  * 刻意**不传 materialColor**：材质的通透感来自它自身的滤镜，
  * 额外赋色会把卡片叠成灰色。
  *
- * 注意 lightEffect 的取舍：实测（HarmonyOS 7.0.0.105 / API 26）单独给按钮材质
- * 加 interactive + lightEffect 会让材质**完全不渲染**，所以按钮默认走静态材质，
+ * 注意 lightEffect 的取舍：实测（HarmonyOS 7.0.0.105 / API 26）单独给卡片承载层
+ * 加 interactive + lightEffect 会让材质**完全不渲染**，所以卡片默认走静态材质，
  * 由调用方通过按钮组件的 `buttonInteractive` 参数按设备情况开启。
  *
  * @param interactive 是否开启交互形变 + 手指流光（HdsTab 那种灵动反馈）
+ * @param withShadow 是否保留材质自带的投影
+ * @param lightColor 流光颜色；空串表示不指定，用系统默认的白光
  */
 function buildImmersiveMaterial(interactive: boolean = false,
-                               withShadow: boolean = true): uiMaterial.Material | null {
+                               withShadow: boolean = true,
+                               lightColor: string = ''): uiMaterial.Material | null {
   try {
     if (interactive) {
       // 《沉浸式系统材质视效》：interactive 开启按压弹性形变；
-      // lightEffect 传入有效对象即启用流光跟随，color 缺省为 Color.White。
+      // lightEffect 传入有效对象即启用流光跟随。
+      //
+      // 流光颜色默认是 Color.White（`LightEffectOptions.color` 的 @default）。
+      // 这里按主题色下发：不传 color 时保持系统白光，传了就是主题色光。
+      // 必须**先声明成带类型标注的常量再赋值**，直接写
+      // `lightEffect: lightColor.length > 0 ? { color: lightColor } : {}`
+      // 会被 ArkTS 判成「无类型对象字面量」而编译不过。
+      const lightOptions: uiMaterial.LightEffectOptions = {};
+      if (lightColor.length > 0) {
+        lightOptions.color = lightColor;
+      }
       return new uiMaterial.ImmersiveMaterial({
         style: materialStyle(),
         interactive: true,
-        lightEffect: {}
+        lightEffect: lightOptions
       });
     }
     if (!withShadow) {
@@ -182,9 +201,12 @@ function buildImmersiveMaterial(interactive: boolean = false,
  * 那等于「显式不画」，会把失败伪装成静默失效。
  *
  * @param interactive 传 true 取「可交互」材质（按压形变 + 流光），按钮类用
+ * @param withShadow 是否保留材质自带投影
+ * @param lightColor 流光颜色，空串 = 系统默认白光
  */
 export function getImmersiveMaterial(interactive: boolean = false,
-                                     withShadow: boolean = true): uiMaterial.Material | null {
+                                     withShadow: boolean = true,
+                                     lightColor: string = ''): uiMaterial.Material | null {
   if (!isApi26OrAbove()) {
     return null;
   }
@@ -196,11 +218,13 @@ export function getImmersiveMaterial(interactive: boolean = false,
     return flatMaterialCache;
   }
   if (interactive) {
-    if (!interactiveMaterialResolved) {
-      interactiveMaterialResolved = true;
-      interactiveMaterialCache = buildImmersiveMaterial(true);
+    const cached = interactiveMaterials.get(lightColor);
+    if (cached !== undefined) {
+      return cached;
     }
-    return interactiveMaterialCache;
+    const built = buildImmersiveMaterial(true, withShadow, lightColor);
+    interactiveMaterials.set(lightColor, built);
+    return built;
   }
   if (!materialResolved) {
     materialResolved = true;
@@ -221,6 +245,37 @@ function immersiveEnabled(): boolean {
   } catch (err) {
     return true;
   }
+}
+
+/**
+ * 沉浸光感的流光 / 光晕用不用主题色（全局开关）。
+ *
+ * 设置页「主题色流光」默认开启：开启时流光改用主题色，
+ * 关闭时回到系统默认的白光——即改动前的观感。
+ * 只给诊断用；渲染路径请用下面的纯函数 `pressLightColor`。
+ */
+function themedLightEnabled(): boolean {
+  try {
+    const enabled = AppStorage.get<boolean>(PRESS_GLOW_STORAGE);
+    return enabled !== false;
+  } catch (err) {
+    return true;
+  }
+}
+
+/**
+ * 按「开关 + 主题色」算出流光颜色，空串 = 不指定颜色、用系统默认白光。
+ *
+ * **刻意做成纯函数、由调用方把订阅值传进来**，和 `resolvePageBackground` 同一个理由：
+ * ArkUI 的局部更新按表达式记录依赖，函数里直接 `AppStorage.get(...)` 是登记不上的，
+ * 拨开关或切主题色时已经画出来的按钮/卡片不会重新求值，流光会停在旧颜色上（见 §7.8）。
+ * 材质承载层与卡片光晕都走它，保证「按钮上的流光」和「卡片上的光晕」永远同色。
+ */
+export function pressLightColor(themedLightOn: boolean, accentColor: string): string {
+  if (!themedLightOn || accentColor.length === 0) {
+    return '';
+  }
+  return accentColor;
 }
 
 /**
@@ -299,14 +354,20 @@ export function sheetBlurStyle(): BlurStyle | undefined {
  * @param interactive 是否启用交互形变 + 手指流光（HdsTab 那种灵动反馈）。
  *                    注意：**流光只在组件自身收到触摸时触发**，启用时承载层
  *                    不能再设 hitTestBehavior(HitTestMode.None)。
+ * @param lightColor 流光颜色，空串 = 系统默认白光。**必须由调用方在渲染期
+ *                   读订阅变量后传进来**，函数内部读 AppStorage 登记不上依赖。
  */
 export function applyMaterialCarrier(
   instance: CommonAttribute,
   fallbackBlur: boolean = true,
   interactive: boolean = false,
-  withShadow: boolean = true
+  withShadow: boolean = true,
+  lightColor: string = ''
 ): void {
-  const material: uiMaterial.Material | null = getImmersiveMaterial(interactive, withShadow);
+  // 流光颜色只对可交互材质有意义：静态材质根本没有 lightEffect 通道。
+  // 颜色由调用方传入（空串 = 系统白光）——见 pressLightColor 的说明。
+  const themed = interactive ? lightColor : '';
+  const material: uiMaterial.Material | null = getImmersiveMaterial(interactive, withShadow, themed);
   if (immersiveEnabled() && material !== null) {
     instance.systemMaterial(material);
   } else if (fallbackBlur) {
@@ -339,8 +400,11 @@ export function materialCarrierActive(): boolean {
 
 /**
  * 诊断文案：把沉浸光感的各段判定条件摊开，便于真机排查「为什么没生效」。
+ *
+ * 两个入参同样是「订阅值传进来」的写法：直接在函数里读 AppStorage 的话，
+ * 设置页那行诊断文字不会随切色/拨开关刷新（它会停在上一档，看着像没生效）。
  */
-export function materialDiagnostics(): string {
+export function materialDiagnostics(themedLightOn: boolean = true, accentColor: string = ''): string {
   const api = deviceInfo.sdkApiVersion;
   const state = systemMaterialState();
   const stateText = state === null
@@ -348,7 +412,9 @@ export function materialDiagnostics(): string {
     : (state === uiMaterial.MaterialState.DISABLE ? 'DISABLE(全局关闭)' : '非DISABLE');
   const material = getImmersiveMaterial();
   const materialText = material === null ? '构造失败' : '已构造';
+  const light = pressLightColor(themedLightOn, accentColor);
+  const lightText = light.length > 0 ? `流光=${light}` : '流光=系统白光';
   const err = systemMaterialError().length > 0 ? systemMaterialError() : immersiveMaterialError();
   const errText = err.length > 0 ? ` 错误=${err}` : '';
-  return `API=${api} 材质=${materialText} 状态=${stateText} 开关=${immersiveEnabled() ? '开' : '关'} 承载=${materialCarrierActive() ? '下发材质' : '降级毛玻璃'}${errText}`;
+  return `API=${api} 材质=${materialText} 状态=${stateText} 开关=${immersiveEnabled() ? '开' : '关'} ${lightText} 承载=${materialCarrierActive() ? '下发材质' : '降级毛玻璃'}${errText}`;
 }

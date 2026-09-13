@@ -25,7 +25,7 @@ import { resourceManager } from '@kit.LocalizationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, HwColor, HwRadius, HwSpace, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground,
+import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, HwColor, HwRadius, HwSpace, PRESS_GLOW_STORAGE, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground,
   withAlpha } from '../utils/DesignTokens';
 import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
@@ -79,10 +79,12 @@ struct AppearanceSettingsPage {
   @StorageLink('cardTintEnabled') cardTintEnabled: boolean = false;
   /** 高权限自定义主题色：打开后自定义色也参与页面背景染色 */
   @StorageLink('customAccentFullAccess') customAccentFullAccess: boolean = false;
+  /** 沉浸光感主题色流光：打开后按压的流光/光晕用主题色，关闭回到系统白光 */
+  @StorageLink('immersivePressGlow') pressGlowEnabled: boolean = true;
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
   @StorageLink('customFonts') customFonts: string[] = [];
-  /** 主题色：预设 key（harmony/rose/custom） */
-  @StorageLink('accentKey') accentKey: string = 'harmony';
+  /** 主题色：预设 key（default/harmony/rose/custom） */
+  @StorageLink('accentKey') accentKey: string = DEFAULT_ACCENT_KEY;
   /** 自定义主题色（RRGGBB，不含 #） */
   @StorageLink('accentCustom') accentCustom: string = '';
   /** 用户新增的自定义主题色列表（RRGGBB，不含 #），顺序即展示顺序 */
@@ -459,6 +461,19 @@ struct AppearanceSettingsPage {
     AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, enabled);
     reloadAppTheme();
     FeedbackLogService.recordOperation('UI', `高权限自定义主题色 ${enabled ? '开' : '关'}`);
+  }
+
+  /**
+   * 主题色流光开关。
+   *
+   * 只影响沉浸光感的按压流光/光晕取色，不动任何颜色 token，
+   * 所以不需要 reloadAppTheme——重新写一次 pressGlow 订阅键即可：
+   * 卡片与圆形按钮都订阅了它，重建时会重新构造带色材质与光晕。
+   */
+  private setPressGlow(enabled: boolean): void {
+    AppSettingsStore.setBoolean(PRESS_GLOW_STORAGE, enabled);
+    AppStorage.setOrCreate(PRESS_GLOW_STORAGE, enabled);
+    FeedbackLogService.recordOperation('UI', `主题色流光 ${enabled ? '开' : '关'}`);
   }
 
   /**
@@ -925,7 +940,7 @@ struct AppearanceSettingsPage {
                       .fontSize(12)
                       .fontColor(HwColor.textSecondary)
                     if (this.immersiveLightEnabled) {
-                      Text(materialDiagnostics())
+                      Text(materialDiagnostics(this.pressGlowEnabled, this.accentColor))
                         .fontFamily('HarmonyOS Sans')
                         .fontWeight(this.appFontWeight())
                         .fontSize(11)
@@ -1040,6 +1055,33 @@ struct AppearanceSettingsPage {
                   .selectedColor(this.accentOrPrimary())
                   .onChange((isOn: boolean): void => {
                     this.setCustomAccentFullAccess(isOn);
+                  })
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+
+              Divider()
+                .color('#14000000')
+
+              Row({ space: HwSpace.md }) {
+                Column({ space: 4 }) {
+                  Text('主题色流光')
+                    .fontFamily(this.appFontFamily('主题色流光'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(15)
+                    .fontColor(HwColor.textPrimary)
+                  Text('按压沉浸光感卡片的流光与光晕改用主题色，光会映照到相邻卡片；关闭后为系统默认白光')
+                    .fontFamily(this.appFontFamily('按压沉浸光感卡片的流光与光晕改用主题色，光会映照到相邻卡片；关闭后为系统默认白光'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(12)
+                    .fontColor(HwColor.textSecondary)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.pressGlowEnabled })
+                  .selectedColor(this.accentOrPrimary())
+                  .onChange((isOn: boolean): void => {
+                    this.setPressGlow(isOn);
                   })
               }
               .width('100%')

@@ -38,7 +38,7 @@ import { deviceSymbolFor, isLightDeviceText } from '../utils/DeviceSymbol';
 import { DataSourceState } from '../models/CacheState';
 import { XiaomiAuthError } from '../models/XiaomiErrors';
 import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
-import { applyMaterialCarrier, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
+import { applyMaterialCarrier, pressLightColor, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
 import { isCelsiusUnit, celsiusToFahrenheit } from '../utils/TemperatureDisplay';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
@@ -177,6 +177,13 @@ struct HomePage {
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
   /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
   @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
+  /**
+   * 主题色流光开关。
+   *
+   * 底部 HdsTab 那圈流光（barFloatingStyle 的 lightColor）默认是白的，
+   * 只有读到这个订阅键，拨开关时底部栏才会重新求值、换色。
+   */
+  @StorageProp('immersivePressGlow') pressGlowSwitch: boolean = true;
   @StorageLink('homeSmoothSwitch') homeSmoothSwitch: boolean = false;
   @StorageLink('fontMode') fontMode: string = 'system';
   @StorageLink('fontFamilyEn') fontFamilyEn: string = 'system';
@@ -4306,6 +4313,17 @@ struct HomePage {
   }
 
   /**
+   * 底部 HdsTab 悬浮栏的流光颜色。
+   *
+   * 这个光由 HdsTabs 自己画（`barFloatingStyle.lightColor`），不归我们的材质管，
+   * 所以必须单独下发一次；关掉「主题色流光」时回到系统默认的白光。
+   */
+  private tabLightColor(): ResourceColor {
+    const light = pressLightColor(this.pressGlowSwitch, this.accentColor);
+    return light.length > 0 ? light : Color.White;
+  }
+
+  /**
    * Tab 切换（绑定 HdsTabs.onChange，切换动画结束后触发）。
    *
    * 下标：0 首页 / 1 消息 / 2 信息 / 3 我的（穿戴设备无信息页：0 首页 / 1 消息 / 2 我的）。
@@ -4461,7 +4479,7 @@ struct HomePage {
               materialType: hdsMaterial.MaterialType.ADAPTIVE,
               materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
             },
-            lightColor: Color.White
+            lightColor: this.tabLightColor()
           })
         }
       }

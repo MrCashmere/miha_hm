@@ -30,7 +30,7 @@ import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { loadCustomFonts } from '../utils/CustomFonts';
-import { applyAppTheme, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, resolveAccentColor } from '../utils/DesignTokens';
+import { applyAppTheme, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, isPresetAccentKey, PRESS_GLOW_STORAGE, resolveAccentColor } from '../utils/DesignTokens';
 
 const DOMAIN = 0x0000;
 
@@ -120,6 +120,9 @@ export default class EntryAbility extends UIAbility {
     const customAccentFullAccess = AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false);
     AppStorage.setOrCreate(CARD_TINT_STORAGE, cardTintEnabled);
     AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, customAccentFullAccess);
+    // 主题色流光开关：材质承载层构造流光时要读它，必须在首帧渲染前就位
+    AppStorage.setOrCreate(PRESS_GLOW_STORAGE,
+      AppSettingsStore.getBoolean(PRESS_GLOW_STORAGE, true));
     // 深色模式偏好（三态：跟随系统 / 浅色 / 深色）。旧键迁移在这里做，
     // 保证后续读到的都是新键；AppStorage 也写一份供设置页双向绑定。
     const darkModePref = EntryAbility.resolveDarkModePref();
@@ -130,8 +133,8 @@ export default class EntryAbility extends UIAbility {
       this.context.getApplicationContext().setColorMode(EntryAbility.resolveColorMode(darkModePref));
     } catch (err) {
     }
-    // 主题色在启动时就要生效：否则首屏会用默认蓝，切到其它页面才变
-    const accentKey = AppSettingsStore.getString('accentKey', 'harmony');
+    // 主题色在启动时就要生效：否则首屏会用默认蓝，切到其它页面才变。
+    const accentKey = EntryAbility.resolveAccentKey();
     const accentCustom = AppSettingsStore.getString('accentCustom', '');
     const accentColor = resolveAccentColor(accentKey, accentCustom);
     AppStorage.setOrCreate('accentKey', accentKey);
@@ -318,12 +321,30 @@ export default class EntryAbility extends UIAbility {
       AppSettingsStore.getBoolean(CARD_TINT_STORAGE, false));
     AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE,
       AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false));
+    AppStorage.setOrCreate(PRESS_GLOW_STORAGE,
+      AppSettingsStore.getBoolean(PRESS_GLOW_STORAGE, true));
     // 同样要把已保存的主题色传入，否则系统深浅色变化会把背景染色重置掉
     const accentColor = resolveAccentColor(
-      AppSettingsStore.getString('accentKey', 'harmony'),
+      EntryAbility.resolveAccentKey(),
       AppSettingsStore.getString('accentCustom', ''));
     applyAppTheme(darkModeEnabled, accentColor);
     AppStorage.setOrCreate('isDarkMode', darkModeEnabled);
+  }
+
+  /**
+   * 读主题色 key，顺带兜底。
+   *
+   * 只接受「内置预设 key」或 `custom`。其余一律归位到默认主题色并写回存储：
+   * 历史版本或异常写入可能留下一个已经不存在的 key（例如曾经短暂存在过的
+   * `default`），那时设置页会**一个色块都不显示选中**，看起来像主题色丢了。
+   */
+  private static resolveAccentKey(): string {
+    const stored = AppSettingsStore.getString('accentKey', DEFAULT_ACCENT_KEY);
+    if (stored === 'custom' || isPresetAccentKey(stored)) {
+      return stored;
+    }
+    AppSettingsStore.setString('accentKey', DEFAULT_ACCENT_KEY);
+    return DEFAULT_ACCENT_KEY;
   }
 
   /**
