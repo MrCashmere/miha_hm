@@ -39,7 +39,7 @@ const PRESS_GLOW_RADIUS: number = 64;
  * 光本身不该是一块实色。压到 0.3 出头是「照亮玻璃表面」，
  * 再浓就变成往卡片上刷了一层主题色。
  */
-const PRESS_GLOW_ALPHA: number = 0.32;
+const PRESS_GLOW_ALPHA: number = 0.27;
 /**
  * 溢出光晕的半径与浓度（vp）。
  *
@@ -50,7 +50,7 @@ const PRESS_GLOW_ALPHA: number = 0.32;
  */
 const PRESS_SPILL_RADIUS: number = 110;
 /** 比手指光斑淡得多：它是溢出到别人身上的光，不该抢主角 */
-const PRESS_SPILL_ALPHA: number = 0.14;
+const PRESS_SPILL_ALPHA: number = 0.11;
 /** 溢出光晕的画布边长，理由同 §7.9：必须 ≥ 2×半径，否则光斑被画布直边切断 */
 const PRESS_SPILL_SIZE: number = PRESS_SPILL_RADIUS * 2;
 /**
@@ -60,13 +60,17 @@ const PRESS_SPILL_SIZE: number = PRESS_SPILL_RADIUS * 2;
  * 只亮**朝向光的那几条边**——整张卡一圈都亮就成了「选中态」，不是反光。
  */
 const RIM_RANGE: number = 120;
-/** 边缘高光的最大不透明度 */
-const RIM_MAX_ALPHA: number = 0.55;
-/** 边缘高光的线宽（vp）。比卡片自带描边略粗，才盖得住、显得像反光 */
-const RIM_WIDTH: number = 2;
-/** 高光最短 / 最长长度（vp）：离光越近铺得越长 */
-const RIM_MIN_SPAN: number = 48;
-const RIM_MAX_SPAN: number = 190;
+/** 边缘高光的最大不透明度。要淡——它是反光，不是描边 */
+const RIM_MAX_ALPHA: number = 0.34;
+/**
+ * 边缘高光的半径范围（vp）：离光越近越大。
+ *
+ * 高光是一个**贴着边框的圆形柔光**，圆心落在「光到卡片矩形最近的那个点」上。
+ * 刻意不用沿边铺的直条：直条在 R 角处是直的，拐不过弯，圆角上就看不到光；
+ * 圆形光斑落在角上时会被卡片自己的圆角裁成一段弧，正好沿 R 角包过去。
+ */
+const RIM_MIN_RADIUS: number = 34;
+const RIM_MAX_RADIUS: number = 108;
 
 /**
  * 卡片沉浸光感承载层。
@@ -765,7 +769,7 @@ export struct PressRim {
   @StorageProp(PRESS_GLOW_X_KEY) lightX: number = -100000;
   @StorageProp(PRESS_GLOW_Y_KEY) lightY: number = -100000;
   @StorageProp(PRESS_GLOW_COLOR_KEY) lightColor: string = '';
-  /** 与卡片一致的圆角，避免高光在圆角处露出直角 */
+  /** 与卡片一致的圆角：高光被裁成卡片形状，到 R 角沿弧收住 */
   @Prop rimRadius: Length = 20;
 
   /** 本组件的窗口矩形，由 onAreaChange 维护 */
@@ -774,49 +778,37 @@ export struct PressRim {
   @State winW: number = 0;
   @State winH: number = 0;
 
-  /** 点到线段的距离。光源在卡片斜侧方时，靠外那条边必须更暗，垂距模型算不出这个差别 */
-  private static segmentDistance(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
-    const dx: number = x2 - x1;
-    const dy: number = y2 - y1;
-    const span: number = dx * dx + dy * dy;
-    let t: number = 0;
-    if (span > 0) {
-      t = ((px - x1) * dx + (py - y1) * dy) / span;
-      t = Math.min(Math.max(t, 0), 1);
-    }
-    const cx: number = x1 + t * dx;
-    const cy: number = y1 + t * dy;
-    return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+  /**
+   * 光到卡片矩形最近的那个点（窗口坐标）。
+   *
+   * 角上的情况自然落在角点上：光在卡片斜外侧时，最近点就是那个 R 角的圆心附近，
+   * 光斑被圆角一裁就沿着弧走过去了。
+   */
+  private nearestX(): number {
+    return Math.min(Math.max(this.lightX, this.winX), this.winX + this.winW);
   }
 
-  /** 光到某条边的距离 */
-  private edgeDistance(edge: string): number {
-    const left: number = this.winX;
-    const right: number = this.winX + this.winW;
-    const top: number = this.winY;
-    const bottom: number = this.winY + this.winH;
-    if (edge === 'top') {
-      return PressRim.segmentDistance(this.lightX, this.lightY, left, top, right, top);
-    }
-    if (edge === 'bottom') {
-      return PressRim.segmentDistance(this.lightX, this.lightY, left, bottom, right, bottom);
-    }
-    if (edge === 'left') {
-      return PressRim.segmentDistance(this.lightX, this.lightY, left, top, left, bottom);
-    }
-    return PressRim.segmentDistance(this.lightX, this.lightY, right, top, right, bottom);
+  private nearestY(): number {
+    return Math.min(Math.max(this.lightY, this.winY), this.winY + this.winH);
+  }
+
+  /** 光到边框的距离 */
+  private edgeDistance(): number {
+    const dx: number = this.lightX - this.nearestX();
+    const dy: number = this.lightY - this.nearestY();
+    return Math.sqrt(dx * dx + dy * dy);
   }
 
   /**
-   * 这条边上的衰减系数（0~1，0 表示照不到）。
+   * 衰减系数（0~1，0 表示照不到）。
    *
    * 平方衰减：光晕边缘更软，不会在 `RIM_RANGE` 处看到一条硬边。
    */
-  private edgeFalloff(edge: string): number {
+  private falloff(): number {
     if (this.lightColor.length === 0 || this.winW <= 0 || this.winH <= 0) {
       return 0;
     }
-    const distance: number = this.edgeDistance(edge);
+    const distance: number = this.edgeDistance();
     if (distance >= RIM_RANGE) {
       return 0;
     }
@@ -824,95 +816,47 @@ export struct PressRim {
     return t * t;
   }
 
-  /** 高光颜色，照不到时全透明 */
-  private glintColor(edge: string): ResourceColor {
-    const falloff: number = this.edgeFalloff(edge);
-    if (falloff <= 0) {
-      return Color.Transparent;
-    }
-    return withAlpha(this.lightColor, falloff * RIM_MAX_ALPHA);
+  /** 高光半径：离得越近铺得越大 */
+  private glintRadius(): number {
+    return RIM_MIN_RADIUS + (RIM_MAX_RADIUS - RIM_MIN_RADIUS) * this.falloff();
   }
 
-  /** 高光长度：离得越近铺得越长，但最短也留一小截，免得缩成一个点 */
-  private glintSpan(edge: string): number {
-    const falloff: number = this.edgeFalloff(edge);
-    const along: number = this.isHorizontal(edge) ? this.winW : this.winH;
-    const wanted: number = RIM_MIN_SPAN + (RIM_MAX_SPAN - RIM_MIN_SPAN) * falloff;
-    return Math.max(1, Math.min(along, wanted));
-  }
-
-  private isHorizontal(edge: string): boolean {
-    return edge === 'top' || edge === 'bottom';
-  }
-
-  /** 高光沿边方向的起点：钉在光源的正投影上，并向内收进卡片范围 */
-  private glintOffset(edge: string): number {
-    const horizontal: boolean = this.isHorizontal(edge);
-    const along: number = horizontal ? this.winW : this.winH;
-    const origin: number = horizontal ? this.winX : this.winY;
-    const light: number = horizontal ? this.lightX : this.lightY;
-    const span: number = this.glintSpan(edge);
-    return Math.min(Math.max(light - origin - span / 2, 0), Math.max(0, along - span));
-  }
-
-  private glintX(edge: string): number {
-    if (edge === 'top' || edge === 'bottom') {
-      return this.glintOffset(edge);
-    }
-    return edge === 'left' ? 0 : Math.max(0, this.winW - RIM_WIDTH);
-  }
-
-  private glintY(edge: string): number {
-    if (edge === 'left' || edge === 'right') {
-      return this.glintOffset(edge);
-    }
-    return edge === 'top' ? 0 : Math.max(0, this.winH - RIM_WIDTH);
-  }
-
-  /** 一段边上的高光。两端淡出、中间最亮，像光在玻璃棱上的一小片反光 */
-  @Builder
-  glint(edge: string) {
-    if (this.edgeFalloff(edge) > 0) {
-      Column()
-        .width(this.isHorizontal(edge) ? this.glintSpan(edge) : RIM_WIDTH)
-        .height(this.isHorizontal(edge) ? RIM_WIDTH : this.glintSpan(edge))
-        .position({ x: this.glintX(edge), y: this.glintY(edge) })
-        .borderRadius(RIM_WIDTH / 2)
-        .linearGradient({
-          angle: this.isHorizontal(edge) ? 90 : 0,
-          colors: [
-            [Color.Transparent, 0],
-            [this.glintColor(edge), 0.35],
-            [this.glintColor(edge), 0.65],
-            [Color.Transparent, 1]
-          ]
-        })
-        .hitTestBehavior(HitTestMode.None)
-        .accessibilityLevel('no')
-    }
+  /** 高光色标：中心最亮，向外淡出 */
+  private glintColors(): Array<[ResourceColor, number]> {
+    const alpha: number = this.falloff() * RIM_MAX_ALPHA;
+    return [
+      [withAlpha(this.lightColor, alpha), 0],
+      [withAlpha(this.lightColor, alpha * 0.55), 0.45],
+      [withAlpha(this.lightColor, alpha * 0.16), 0.75],
+      [Color.Transparent, 1]
+    ];
   }
 
   build() {
-    Stack() {
-      this.glint('top')
-      this.glint('bottom')
-      this.glint('left')
-      this.glint('right')
+    // 整层与卡片同尺寸，光斑用**渐变圆心**摆在边框上，而不是把一个小方块挪过去：
+    // 尺寸跟着卡片走，就不会出现「比父容器大的子节点把卡片撑大」那种事（见 §7.9）。
+    // 圆角 + 裁切让光斑沿卡片形状收住，落在 R 角上就自然沿弧包过去。
+    if (this.falloff() > 0) {
+      Column()
+        .width(LayoutPolicy.matchParent)
+        .height(LayoutPolicy.matchParent)
+        .borderRadius(this.rimRadius)
+        .radialGradient({
+          center: [this.nearestX() - this.winX, this.nearestY() - this.winY],
+          radius: this.glintRadius(),
+          colors: this.glintColors()
+        })
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
+        .onAreaChange((_oldArea: Area, newArea: Area): void => {
+          const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.winX;
+          const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.winY;
+          this.winX = gx;
+          this.winY = gy;
+          this.winW = typeof newArea.width === 'number' ? newArea.width : 0;
+          this.winH = typeof newArea.height === 'number' ? newArea.height : 0;
+        })
     }
-    .width(LayoutPolicy.matchParent)
-    .height(LayoutPolicy.matchParent)
-    .borderRadius(this.rimRadius)
-    .clip(true)
-    .hitTestBehavior(HitTestMode.None)
-    .accessibilityLevel('no')
-    .onAreaChange((_oldArea: Area, newArea: Area): void => {
-      const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.winX;
-      const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.winY;
-      this.winX = gx;
-      this.winY = gy;
-      this.winW = typeof newArea.width === 'number' ? newArea.width : 0;
-      this.winH = typeof newArea.height === 'number' ? newArea.height : 0;
-    })
   }
 }
 
