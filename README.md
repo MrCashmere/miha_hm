@@ -136,8 +136,9 @@ HarmonyOS API 26 引入 `uiMaterial`（系统材质）与 `systemMaterial()`，�
 因此：
 
 - **卡片**（需要覆盖整块矩形）→ `MaterialCard` 用 `ToggleType.Button` 作承载层；
-- **圆形按钮** → `IconCircleButton` 直接把材质挂在 `Button` 上（官方明确 Button 支持 `systemMaterial`），
-  不需要任何承载层。
+- **圆形按钮** → `IconCircleButton` **同样用 `ToggleType.Button` 作承载层**，图标用 `SymbolGlyph`
+  叠在上面。官方虽然写了 `Button` 支持 `systemMaterial`，但**真机实测普通 `Button` 挂材质不渲染**，
+  所以全仓统一只走 Toggle，不直接给 `Button` 挂材质。
 
 材质生效时其样式优先级**高于组件原有的背景色、模糊、阴影与边框**，所以承载层/按钮要让出自身底色。
 
@@ -238,6 +239,11 @@ Stack() {
   包一层 `MaterialCardLayer` 就与卡片走同一条已验证的路径。
 - 带 `layoutWeight` 的按钮要把它移到外层 `Stack` 上（`Stack` 内 `layoutWeight` 不生效），
   同时给 `Button` 补 `width('100%')`。
+
+### 用 Toggle 绕过生效范围限制
+
+本文只记录结论；**承载层的完整写法、五条必需属性、逐条踩坑与移植清单**见
+[`docs/沉浸光感Toggle承载方案.md`](docs/沉浸光感Toggle承载方案.md)。
 
 ### 降级行为
 
