@@ -22,8 +22,6 @@
 import { LengthMetrics } from '@kit.ArkUI';
 import { applyMaterialCarrier, isApi26OrAbove, pressLightColor } from '../utils/SystemMaterial';
 import { HwGlassCardColor, HwRadius, withAlpha } from '../utils/DesignTokens';
-import { PRESS_GLOW_COLOR_KEY, PRESS_GLOW_PUBLISH_MS, PRESS_GLOW_X_KEY, PRESS_GLOW_Y_KEY,
-  publishPressGlow } from '../utils/PressGlowBeacon';
 
 /**
  * 流光光晕的半径（vp）。
@@ -39,7 +37,7 @@ const PRESS_GLOW_RADIUS: number = 64;
  * 光本身不该是一块实色。压到 0.3 出头是「照亮玻璃表面」，
  * 再浓就变成往卡片上刷了一层主题色。
  */
-const PRESS_GLOW_ALPHA: number = 0.27;
+const PRESS_GLOW_ALPHA: number = 0.32;
 /**
  * 溢出光晕的半径与浓度（vp）。
  *
@@ -50,27 +48,9 @@ const PRESS_GLOW_ALPHA: number = 0.27;
  */
 const PRESS_SPILL_RADIUS: number = 110;
 /** 比手指光斑淡得多：它是溢出到别人身上的光，不该抢主角 */
-const PRESS_SPILL_ALPHA: number = 0.11;
+const PRESS_SPILL_ALPHA: number = 0.14;
 /** 溢出光晕的画布边长，理由同 §7.9：必须 ≥ 2×半径，否则光斑被画布直边切断 */
 const PRESS_SPILL_SIZE: number = PRESS_SPILL_RADIUS * 2;
-/**
- * 邻卡边缘高光的触发距离与最亮值。
- *
- * 光距离某条边在 `RIM_RANGE` 以内，那条边就开始亮；越近越亮，超过就完全不亮。
- * 只亮**朝向光的那几条边**——整张卡一圈都亮就成了「选中态」，不是反光。
- */
-const RIM_RANGE: number = 120;
-/** 边缘高光的最大不透明度。要淡——它是反光，不是描边 */
-const RIM_MAX_ALPHA: number = 0.34;
-/**
- * 边缘高光的半径范围（vp）：离光越近越大。
- *
- * 高光是一个**贴着边框的圆形柔光**，圆心落在「光到卡片矩形最近的那个点」上。
- * 刻意不用沿边铺的直条：直条在 R 角处是直的，拐不过弯，圆角上就看不到光；
- * 圆形光斑落在角上时会被卡片自己的圆角裁成一段弧，正好沿 R 角包过去。
- */
-const RIM_MIN_RADIUS: number = 34;
-const RIM_MAX_RADIUS: number = 108;
 
 /**
  * 卡片沉浸光感承载层。
@@ -253,17 +233,6 @@ export struct MaterialCard {
   private lastAreaX: number = 0;
   private lastAreaY: number = 0;
   private areaReady: boolean = false;
-  /** 上次广播光源的时间戳，用于节流（`publishGlow`） */
-  private lastPublishMs: number = 0;
-  /**
-   * 卡片在 `Area.globalPosition` 那套坐标里的原点。
-   *
-   * 广播给邻卡的光源位置**必须用这套坐标**：邻卡量自己矩形用的也是它。
-   * 曾经把窗口坐标（`windowX/Y`）直接广播出去，两套原点差着一个常量，
-   * 结果算出来的距离全是错的——该亮的是上边，亮的却是右边。
-   */
-  private cardAreaX: number = 0;
-  private cardAreaY: number = 0;
 
   /** 对应原卡片容器上的 .onClick()。 */
   cardOnClick: () => void = (): void => {
@@ -343,9 +312,6 @@ export struct MaterialCard {
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       this.glowOn = false;
-      // 立刻熄灭，不走节流：不然松手后邻卡的高光还要挂 40ms 才散
-      this.lastPublishMs = 0;
-      publishPressGlow(0, 0, '');
       return;
     }
     if (event.type !== TouchType.Down && event.type !== TouchType.Move) {
@@ -364,7 +330,6 @@ export struct MaterialCard {
     this.lastTouchWinY = touch.windowY;
     this.syncGlowPosition();
     this.glowOn = true;
-    this.publishGlow();
   }
 
   /**
@@ -470,10 +435,6 @@ export struct MaterialCard {
     }
     // 流光压在材质之上、内容之下：光打在玻璃表面，文字仍然压在光上面保持清晰
     this.pressGlowLayer()
-    // 边缘高光压在最上面：它是玻璃的边，本来就该盖住内容。
-    // 不区分「自己发光」还是「被别人照到」——两种情况都只亮被光覆盖的那一段，
-    // 整圈描边会变成选中态（第一版就是这么错的）
-    PressRim({ rimRadius: this.cardRadius })
     Flex({
       direction: this.cardDirection,
       space: { main: LengthMetrics.vp(this.cardSpace) },
@@ -530,22 +491,6 @@ export struct MaterialCard {
    *
    * `hitTestBehavior(None)` 保证它不吃触摸。
    */
-  /**
-   * 把光源位置广播出去，让附近的卡片在自己的边缘上画高光。
-   *
-   * 按 `PRESS_GLOW_PUBLISH_MS` 节流：触摸事件约 8ms 一个，
-   * 逐个转发会让满屏卡片每帧重绘好几次。
-   */
-  private publishGlow(): void {
-    const now: number = Date.now();
-    if (now - this.lastPublishMs < PRESS_GLOW_PUBLISH_MS) {
-      return;
-    }
-    this.lastPublishMs = now;
-    // 用 globalPosition 那套坐标广播：邻卡量自己矩形用的就是它，两边必须同一个原点
-    publishPressGlow(this.cardAreaX + this.glowX, this.cardAreaY + this.glowY, this.glowAccent());
-  }
-
   @Builder
   pressGlowLayer() {
     if (this.glowVisible()) {
@@ -599,8 +544,6 @@ export struct MaterialCard {
       this.lastAreaX = gx;
       this.lastAreaY = gy;
       this.areaReady = true;
-      this.cardAreaX = gx;
-      this.cardAreaY = gy;
     })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
@@ -654,8 +597,6 @@ export struct MaterialCard {
       this.lastAreaX = gx;
       this.lastAreaY = gy;
       this.areaReady = true;
-      this.cardAreaX = gx;
-      this.cardAreaY = gy;
     })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
@@ -745,118 +686,6 @@ export struct MaterialSheetPanel {
     .backgroundColor(this.materialActive() ? Color.Transparent
       : (this.cardSurface.length > 0 ? this.cardSurface : HwGlassCardColor.surface))
     .clip(true)
-  }
-}
-
-/**
- * 边缘高光（液态玻璃的「反光」）。
- *
- * 光从被按住的那张卡溢出来，落在旁边卡片的边上——旁边那张卡**自己**在边缘画一段高光。
- * 为什么必须各画各的，见 `PressGlowBeacon` 顶部的说明：画在别人下面看不见，
- * 画在别人上面又会把人家内部照亮，只有自己画自己的边才是「亮在边上、不亮在里面」。
- *
- * **只画被光照到的那一段，不给整张卡描边。** 一整圈边框是「选中态」，
- * 不是反光：光只会落在离它最近的那一小段边上，其余三边该是暗的。
- * 所以这里按「光到这条边的距离」算出亮度与光斑长度，位置钉在光的正投影处。
- *
- * 位置信息由组件**自己**量（`onAreaChange`），不从父组件传：
- * 卡片在列表里滚动时位置一直在变，走 @Prop 就得让父组件跟着重绘、
- * 连材质一起反复重建；自己量的话滚动时只重绘这一层薄薄的高光。
- */
-@Component
-export struct PressRim {
-  /** 光源位置与颜色，由被按住的卡片广播（见 PressGlowBeacon） */
-  @StorageProp(PRESS_GLOW_X_KEY) lightX: number = -100000;
-  @StorageProp(PRESS_GLOW_Y_KEY) lightY: number = -100000;
-  @StorageProp(PRESS_GLOW_COLOR_KEY) lightColor: string = '';
-  /** 与卡片一致的圆角：高光被裁成卡片形状，到 R 角沿弧收住 */
-  @Prop rimRadius: Length = 20;
-
-  /** 本组件的窗口矩形，由 onAreaChange 维护 */
-  @State winX: number = 0;
-  @State winY: number = 0;
-  @State winW: number = 0;
-  @State winH: number = 0;
-
-  /**
-   * 光到卡片矩形最近的那个点（窗口坐标）。
-   *
-   * 角上的情况自然落在角点上：光在卡片斜外侧时，最近点就是那个 R 角的圆心附近，
-   * 光斑被圆角一裁就沿着弧走过去了。
-   */
-  private nearestX(): number {
-    return Math.min(Math.max(this.lightX, this.winX), this.winX + this.winW);
-  }
-
-  private nearestY(): number {
-    return Math.min(Math.max(this.lightY, this.winY), this.winY + this.winH);
-  }
-
-  /** 光到边框的距离 */
-  private edgeDistance(): number {
-    const dx: number = this.lightX - this.nearestX();
-    const dy: number = this.lightY - this.nearestY();
-    return Math.sqrt(dx * dx + dy * dy);
-  }
-
-  /**
-   * 衰减系数（0~1，0 表示照不到）。
-   *
-   * 平方衰减：光晕边缘更软，不会在 `RIM_RANGE` 处看到一条硬边。
-   */
-  private falloff(): number {
-    if (this.lightColor.length === 0 || this.winW <= 0 || this.winH <= 0) {
-      return 0;
-    }
-    const distance: number = this.edgeDistance();
-    if (distance >= RIM_RANGE) {
-      return 0;
-    }
-    const t: number = 1 - distance / RIM_RANGE;
-    return t * t;
-  }
-
-  /** 高光半径：离得越近铺得越大 */
-  private glintRadius(): number {
-    return RIM_MIN_RADIUS + (RIM_MAX_RADIUS - RIM_MIN_RADIUS) * this.falloff();
-  }
-
-  /** 高光色标：中心最亮，向外淡出 */
-  private glintColors(): Array<[ResourceColor, number]> {
-    const alpha: number = this.falloff() * RIM_MAX_ALPHA;
-    return [
-      [withAlpha(this.lightColor, alpha), 0],
-      [withAlpha(this.lightColor, alpha * 0.55), 0.45],
-      [withAlpha(this.lightColor, alpha * 0.16), 0.75],
-      [Color.Transparent, 1]
-    ];
-  }
-
-  build() {
-    // 整层与卡片同尺寸，光斑用**渐变圆心**摆在边框上，而不是把一个小方块挪过去：
-    // 尺寸跟着卡片走，就不会出现「比父容器大的子节点把卡片撑大」那种事（见 §7.9）。
-    // 圆角 + 裁切让光斑沿卡片形状收住，落在 R 角上就自然沿弧包过去。
-    if (this.falloff() > 0) {
-      Column()
-        .width(LayoutPolicy.matchParent)
-        .height(LayoutPolicy.matchParent)
-        .borderRadius(this.rimRadius)
-        .radialGradient({
-          center: [this.nearestX() - this.winX, this.nearestY() - this.winY],
-          radius: this.glintRadius(),
-          colors: this.glintColors()
-        })
-        .hitTestBehavior(HitTestMode.None)
-        .accessibilityLevel('no')
-        .onAreaChange((_oldArea: Area, newArea: Area): void => {
-          const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.winX;
-          const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.winY;
-          this.winX = gx;
-          this.winY = gy;
-          this.winW = typeof newArea.width === 'number' ? newArea.width : 0;
-          this.winH = typeof newArea.height === 'number' ? newArea.height : 0;
-        })
-    }
   }
 }
 

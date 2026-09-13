@@ -39,7 +39,6 @@ import { DataSourceState } from '../models/CacheState';
 import { XiaomiAuthError } from '../models/XiaomiErrors';
 import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { applyMaterialCarrier, pressLightColor, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
-import { PRESS_GLOW_PUBLISH_MS, publishPressGlow } from '../utils/PressGlowBeacon';
 import { isCelsiusUnit, celsiusToFahrenheit } from '../utils/TemperatureDisplay';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
@@ -59,8 +58,6 @@ const TITLE_BAR_HEIGHT_FREE: number = 137;
 const CONTENT_TOP_OFFSET: number = 137;
 const BOTTOM_BAR_HEIGHT: number = 56;
 const BOTTOM_BAR_MARGIN: number = 12;
-/** 悬浮底栏触摸判定带向上多留的余量（vp），见 HomePage.inFloatingBar */
-const TAB_BAR_BAND_SLACK: number = 36;
 const INFO_CARD_HEIGHT: number = 128;
 const SIDE_BAR_WIDTH_DEFAULT: number = 96;
 const SIDE_BAR_WIDTH_MIN: number = 80;
@@ -245,7 +242,6 @@ struct HomePage {
   @StorageProp('currentWidthBreakpoint') @Watch('onBreakpointChange')
   widthBp: WidthBreakpoint = WidthBreakpoint.WIDTH_SM;
   @StorageProp('screenWidthVp') screenWidthVp: number = 0;
-  @StorageProp('screenHeightVp') screenHeightVp: number = 0;
   @StorageLink('pcLayoutEnabled') @Watch('onBreakpointChange') pcLayoutEnabled: boolean = false;
   @State isWideScreen: boolean = false;
   @State sideBarWidth: number = SIDE_BAR_WIDTH_DEFAULT;
@@ -263,15 +259,6 @@ struct HomePage {
   /** 采集页概览区开关，对应设置页「首页概览卡片」 */
   @StorageLink('showOverviewCards') showOverviewCards: boolean = true;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
-  /**
-   * 悬浮底栏流光用的几个字段。
-   *
-   * 底栏的流光由 `HdsTabs` 自己画（`barFloatingStyle.lightColor`），不归我们的材质管；
-   * 但它同样要把光洒到附近卡片的边上，所以触摸落在底栏那一条带子里时，
-   * 由这里把光源位置广播出去，剩下的交给各张卡的 `PressRim`。
-   */
-  private barGesture: boolean = false;
-  private barLightMs: number = 0;
   @StorageLink('defaultHomeTab') defaultHomeTab: string = 'home';
   @StorageLink('infoRefreshInterval') @Watch('onInfoRefreshIntervalChanged') infoRefreshInterval: string = '30';
   @State localRooms: UserRoom[] = [];
@@ -4326,74 +4313,6 @@ struct HomePage {
   }
 
   /**
-   * 触摸点是否落在底部悬浮栏那一条带子里。
-   *
-   * 悬浮栏是 `HdsTabs` 内部画的，拿不到它的节点，只能按它已知的几何去框：
-   * 左右各留 `barSideMargin`，竖直方向是「窗口底部 - 导航条 - 悬浮间距」往上 `BOTTOM_BAR_HEIGHT`。
-   * 判定故意只用来**决定要不要广播光源**，框宽一点窄一点都只是流光少一段，不会误伤交互。
-   */
-  private inFloatingBar(x: number, y: number): boolean {
-    if (this.isWideScreen || this.isWearable || this.screenHeightVp <= 0) {
-      return false;
-    }
-    // 底栏的实际高度由系统决定（不等于 BOTTOM_BAR_HEIGHT），这里给足余量：
-    // 判宽了顶多多广播一次光源，判窄了会出现「按在底栏上却什么都不亮」——
-    // 第一版就是按 BOTTOM_BAR_HEIGHT 卡得太紧，手指落在底栏上半截时全部漏掉。
-    const bandTop: number = this.screenHeightVp - BOTTOM_BAR_HEIGHT - BOTTOM_BAR_MARGIN
-      - this.navigationBarHeight - TAB_BAR_BAND_SLACK;
-    return y >= bandTop && y <= this.screenHeightVp
-      && x >= 8 && x <= this.screenWidthVp - 8;
-  }
-
-  /**
-   * 底部悬浮栏上的流光。
-   *
-   * 为什么挂在页面根节点上：悬浮栏在 `HdsTabs` 内部，没有可以挂 `onTouch` 的节点；
-   * 挂在根节点上按位置过滤，等价于「手指在底栏上滑动」。
-   * 只有**按下就落在底栏里**的那一次手势才会广播——否则手指在卡片上按时，
-   * 这里会因为「不在底栏」而把卡片刚点亮的流光清掉。
-   */
-  private handleBarTouch(event: TouchEvent): void {
-    if (this.isWideScreen || this.isWearable) {
-      return;
-    }
-    if (event.touches.length === 0) {
-      return;
-    }
-    const touch = event.touches[0];
-    if (event.type === TouchType.Down) {
-      this.barGesture = this.inFloatingBar(touch.windowX, touch.windowY);
-    }
-    if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      if (this.barGesture) {
-        this.barGesture = false;
-        this.barLightMs = 0;
-        publishPressGlow(0, 0, '');
-      }
-      return;
-    }
-    if (event.type !== TouchType.Move && event.type !== TouchType.Down) {
-      return;
-    }
-    if (!this.barGesture) {
-      return;
-    }
-    const color: string = pressLightColor(this.pressGlowSwitch, this.accentColor);
-    if (color.length === 0) {
-      return;
-    }
-    const now: number = Date.now();
-    if (now - this.barLightMs < PRESS_GLOW_PUBLISH_MS) {
-      return;
-    }
-    this.barLightMs = now;
-    // 直接用窗口坐标广播。真机核对过：页面根节点的 `globalPosition` 是 (0,0)、
-    // 由触摸反推出来的窗口原点也是 (0,0)，主页面这一层两套坐标是重合的，
-    // 而 `PressRim` 量自己用的正是 `globalPosition`（见 PressGlowBeacon 的说明）。
-    publishPressGlow(touch.windowX, touch.windowY, color);
-  }
-
-  /**
    * 底部 HdsTab 悬浮栏的流光颜色。
    *
    * 这个光由 HdsTabs 自己画（`barFloatingStyle.lightColor`），不归我们的材质管，
@@ -4562,29 +4481,6 @@ struct HomePage {
             },
             lightColor: this.tabLightColor()
           })
-        }
-
-        // 底部悬浮栏的触摸观察层。
-        //
-        // 为什么需要它：悬浮栏由 `HdsTabs` 内部绘制，触摸被它整段吃掉，
-        // 挂在页面根节点上的 onTouch **一个事件都收不到**（真机验证过）。
-        // 于是在底栏那一条带子上盖一层透明层专门收触摸，
-        // `HitTestMode.Transparent` 表示「自己也响应，但不阻塞下面的兄弟节点」——
-        // 底栏的点击、滑动照常可用，我们只是顺带知道手指在哪。
-        if (!this.isWideScreen && !this.isWearable && this.screenHeightVp > 0) {
-          Column()
-            .width('100%')
-            .height(BOTTOM_BAR_HEIGHT + BOTTOM_BAR_MARGIN + this.navigationBarHeight + TAB_BAR_BAND_SLACK)
-            .position({
-              x: 0,
-              y: this.screenHeightVp
-                - (BOTTOM_BAR_HEIGHT + BOTTOM_BAR_MARGIN + this.navigationBarHeight + TAB_BAR_BAND_SLACK)
-            })
-            .hitTestBehavior(HitTestMode.Transparent)
-            .accessibilityLevel('no')
-            .onTouch((event: TouchEvent): void => {
-              this.handleBarTouch(event);
-            })
         }
       }
       .width('100%')
