@@ -423,8 +423,8 @@ export struct MaterialCard {
       // **父级可用尺寸**解析，高度会被撑到容器满高，卡片跟着胀大；
       // matchParent 按父级实测尺寸解析，随内容走（与 MaterialCardLayer 同一写法）。
       //
-      // 圆角自己给一份：外壳的 clip 已经把它裁成卡片形状，这里再给一次圆角，
-      // 两层都圆角就不会出现「外壳圆角、内层直角」的毛边。
+      // 圆角**必须自己给**：外壳为了让溢出光晕漏出去已经不设 clip(true)，
+      // 裁切责任下移到每一层。这一层是整块方形底色，不给圆角就会在卡片四角露出直角。
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
