@@ -27,8 +27,19 @@ import { reloadAppTheme, HwColor } from '../utils/DesignTokens';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { FeedbackLogService } from '../services/FeedbackLogService';
+import { Logger } from '../utils/Logger';
 
 const MIN_CROP_WIDTH: number = 80;
+
+/**
+ * 解码长边上限。
+ *
+ * 相册里的原图动辄上亿像素（实测遇到过 15011×11258 ≈ 1.69 亿），
+ * 按原始尺寸解码要么直接失败、要么把内存吃光——表现为**预览一片空白**，
+ * 因为 getImageInfo() 只读文件头，尺寸看起来完全正常，很容易误判成路径问题。
+ * 背景最终只需要屏幕分辨率，所以解码时先降到长边 2560 再处理。
+ */
+const MAX_DECODE_LONG_SIDE: number = 2560;
 
 @Entry
 @Component
@@ -63,11 +74,26 @@ struct BackgroundCropPage {
     return this.fontWeightMode === 'custom' ? this.fontWeightValue : 400;
   }
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /**
+   * 窗口尺寸（vp），由 EntryAbility 从 windowRect 写入并随 windowSizeChange 更新。
+   *
+   * 裁剪比例必须用**窗口**而不是物理屏幕：折叠屏展开/折叠、模拟器、PC 分屏下，
+   * 窗口尺寸与屏幕尺寸并不一致，用屏幕比例裁出来的图放到只占窗口大小的背景上
+   * 就会被 Cover 再裁一刀，出现「框住的区域没被保住」。
+   */
+  @StorageProp('screenWidthVp') @Watch('onWindowSizeChanged') screenWidthVp: number = 0;
+  @StorageProp('screenHeightVp') @Watch('onWindowSizeChanged') screenHeightVp: number = 0;
   @State sourceUri: string = '';
   @State errorMessage: string = '';
   @State saving: boolean = false;
   @State imageWidth: number = 0;
   @State imageHeight: number = 0;
+  /**
+   * 降采样后的解码尺寸：预览与裁剪都基于它，保证「所见即所裁」。
+   * 必须是 @State —— 预览图的 sourceSize 依赖它，普通字段变化不会让 Image 重新求值。
+   */
+  @State decodedWidth: number = 0;
+  @State decodedHeight: number = 0;
   @State areaWidth: number = 0;
   @State areaHeight: number = 0;
   @State cropX: number = 0;
@@ -95,11 +121,47 @@ struct BackgroundCropPage {
     FeedbackLogService.setCurrentPage('背景裁剪页');
     const params = router.getParams() as Record<string, Object>;
     this.sourceUri = String(params['sourceUri'] ?? '');
-    const screen = display.getDefaultDisplaySync();
-    if (screen.width > 0 && screen.height > 0) {
-      this.cropAspectRatio = screen.width / screen.height;
-    }
+    this.resolveAspectRatio();
     this.resolveImageInfo();
+  }
+
+  /**
+   * 解析裁剪框的长宽比。
+   *
+   * 优先用窗口尺寸；拿不到时退回物理屏幕。宽高比与单位无关，
+   * 所以 vp 和 px 混用不影响结果，关键是**尺寸来源**要和背景实际覆盖的区域一致。
+   */
+  private resolveAspectRatio(): void {
+    let displayWidth = 0;
+    let displayHeight = 0;
+    try {
+      const screen = display.getDefaultDisplaySync();
+      displayWidth = screen.width;
+      displayHeight = screen.height;
+    } catch (err) {
+      displayWidth = -1;
+      displayHeight = -1;
+    }
+    if (this.screenWidthVp > 0 && this.screenHeightVp > 0) {
+      this.cropAspectRatio = this.screenWidthVp / this.screenHeightVp;
+    } else if (displayWidth > 0 && displayHeight > 0) {
+      this.cropAspectRatio = displayWidth / displayHeight;
+    }
+    // 诊断日志：折叠屏/模拟器上窗口与屏幕尺寸可能不一致，出问题时这行能直接定位
+    Logger.info('crop ratio=%{public}s window=%{public}sx%{public}s display=%{public}sx%{public}s',
+      this.cropAspectRatio.toFixed(4),
+      this.screenWidthVp.toFixed(1), this.screenHeightVp.toFixed(1),
+      `${displayWidth}`, `${displayHeight}`);
+  }
+
+  /**
+   * 窗口尺寸变化（折叠屏展开/折叠、旋转、PC 拖拽分屏）时重算比例并复位裁剪框。
+   * resetCrop 会写入 @State 字段，从而触发重绘——@Watch 本身只负责调用回调，
+   * 光改 cropAspectRatio 这个普通字段是不会让界面更新的。
+   */
+  onWindowSizeChanged(): void {
+    this.resolveAspectRatio();
+    this.resetCrop();
   }
 
   private async resolveImageInfo(): Promise<void> {
@@ -118,6 +180,7 @@ struct BackgroundCropPage {
         const info = await source.getImageInfo();
         this.imageWidth = info.size.width;
         this.imageHeight = info.size.height;
+        this.computeDecodedSize();
         this.workingUri = candidates[i];
         this.uriSourceValid = true;
         source.release();
@@ -135,6 +198,7 @@ struct BackgroundCropPage {
         const info = await source.getImageInfo();
         this.imageWidth = info.size.width;
         this.imageHeight = info.size.height;
+        this.computeDecodedSize();
         this.resolvedFd = file.fd;
         this.uriSourceValid = false;
         source.release();
@@ -144,6 +208,30 @@ struct BackgroundCropPage {
     } catch (err) {
     }
     this.errorMessage = '无法读取图片，请重新选择';
+  }
+
+  /** 按长边上限等比算出解码尺寸；原图不超限时就是原尺寸 */
+  private computeDecodedSize(): void {
+    const longSide = Math.max(this.imageWidth, this.imageHeight);
+    if (longSide <= MAX_DECODE_LONG_SIDE) {
+      this.decodedWidth = this.imageWidth;
+      this.decodedHeight = this.imageHeight;
+      return;
+    }
+    const ratio = MAX_DECODE_LONG_SIDE / longSide;
+    this.decodedWidth = Math.max(1, Math.round(this.imageWidth * ratio));
+    this.decodedHeight = Math.max(1, Math.round(this.imageHeight * ratio));
+    Logger.info('oversized image %{public}dx%{public}d downscaled to %{public}dx%{public}d',
+      this.imageWidth, this.imageHeight, this.decodedWidth, this.decodedHeight);
+  }
+
+  /**
+   * 预览用的 URI。
+   * resolveImageInfo 可能只验证通过 fd 那条路（uriSourceValid=false），
+   * 那种情况下用原始 sourceUri 交给 Image 组件同样读不出来，得用验证过的那一个。
+   */
+  private previewUri(): string {
+    return this.uriSourceValid && this.workingUri.length > 0 ? this.workingUri : this.sourceUri;
   }
 
   private openCropSource(): image.ImageSource {
@@ -192,14 +280,16 @@ struct BackgroundCropPage {
   }
 
   private resetCrop(): void {
-    if (this.imageWidth <= 0 || this.imageHeight <= 0 ||
+    if (this.decodedWidth <= 0 || this.decodedHeight <= 0 ||
       this.areaWidth <= 0 || this.areaHeight <= 0) {
       return;
     }
-    this.displayScale = Math.min(this.areaWidth / this.imageWidth,
-      this.areaHeight / this.imageHeight);
-    this.displayWidth = this.imageWidth * this.displayScale;
-    this.displayHeight = this.imageHeight * this.displayScale;
+    // 用解码尺寸而非原图尺寸：预览就是按这个尺寸解码出来的，
+    // 两边用同一套坐标，「框住哪里就裁哪里」才成立。
+    this.displayScale = Math.min(this.areaWidth / this.decodedWidth,
+      this.areaHeight / this.decodedHeight);
+    this.displayWidth = this.decodedWidth * this.displayScale;
+    this.displayHeight = this.decodedHeight * this.displayScale;
     this.displayX = (this.areaWidth - this.displayWidth) / 2;
     this.displayY = (this.areaHeight - this.displayHeight) / 2;
     const maxWidth = Math.min(this.displayWidth, this.displayHeight * this.cropAspectRatio);
@@ -275,14 +365,18 @@ struct BackgroundCropPage {
       const ix = Math.max(0, Math.round((this.cropX - this.displayX) / scale));
       const iy = Math.max(0, Math.round((this.cropY - this.displayY) / scale));
       const iw = Math.max(1, Math.min(Math.round(this.cropWidth / scale),
-        this.imageWidth - ix));
+        this.decodedWidth - ix));
       const ih = Math.max(1, Math.min(Math.round(this.cropHeight() / scale),
-        this.imageHeight - iy));
+        this.decodedHeight - iy));
       const source = this.openCropSource();
       if (source === undefined) {
         throw new Error('无法读取图片');
       }
-      const pixelMap = await source.createPixelMap();
+      // 关键：按降采样后的尺寸解码，不要用原始尺寸。
+      // 1.69 亿像素的图按原尺寸解码会失败或耗尽内存，而且背景本来也不需要那么大。
+      const decodeSize: image.Size = { width: this.decodedWidth, height: this.decodedHeight };
+      const decodeOptions: image.DecodingOptions = { desiredSize: decodeSize };
+      const pixelMap = await source.createPixelMap(decodeOptions);
       const cropSize: image.Size = { width: iw, height: ih };
       const cropRegion: image.Region = { size: cropSize, x: ix, y: iy };
       await pixelMap.crop(cropRegion);
@@ -352,10 +446,16 @@ struct BackgroundCropPage {
       }
 
       Stack({ alignContent: Alignment.TopStart }) {
-        Image(this.sourceUri)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Contain)
+        // 等解码尺寸就绪再渲染：首帧 decodedWidth 还是 0，此时给 sourceSize 传 0
+        // 会让解码器无从下手，图照样出不来。
+        if (this.decodedWidth > 0 && this.decodedHeight > 0) {
+          // sourceSize 让解码器直接按目标尺寸解码，避免为了显示而把上亿像素整张解进内存
+          Image(this.previewUri())
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Contain)
+            .sourceSize({ width: this.decodedWidth, height: this.decodedHeight })
+        }
 
         Column()
           .width('100%')
