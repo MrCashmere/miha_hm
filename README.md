@@ -269,6 +269,12 @@ Stack() {
 要点：颜色常量集中在可变对象 `HwColor` 里，靠 `AppStorage['accentColor']` 广播刷新；
 `Toggle` / `Slider` 的 `selectedColor` 默认是系统强调色，必须显式覆盖。
 
+## 其它文档
+
+- [`docs/ThemeColor.md`](docs/ThemeColor.md)：主题色实现与移植指南
+- [`docs/沉浸光感Toggle承载方案.md`](docs/沉浸光感Toggle承载方案.md)：沉浸光感承载层写法与踩坑
+- [`docs/待研究问题.md`](docs/待研究问题.md)：排查记录（含已解决问题与仍未解决的条目）
+
 ## 环境要求
 
 - DevEco Studio（含 HarmonyOS SDK，建议 6.x / API 26）。
@@ -324,9 +330,6 @@ $env:DEVECO_SDK_HOME='C:\Program Files\Huawei\DevEco Studio\sdk'
 - HarmonyOS NEXT 不提供违规的常驻后台通道，后台能力仅限系统允许的原生通知。
 - **沉浸光感的 Toggle 承载层依赖系统内部行为**：开关类控件当前不受 `systemMaterial()` 生效约束管控，
   但该行为由系统实现决定，系统更新后可能变化。`MaterialCard` 已内置降级路径，届时会退回毛玻璃而非异常。
-- **切换 Tab 后列表不回顶部**：已多轮排查仍未跑通，现象、试过的方案、
-  已排除的原因与下一步切入点都记在 [`docs/待研究问题.md`](docs/待研究问题.md)。
-  首页顶栏的「列表回正」按钮可用作临时手段。
 
 ## 合规说明
 
