@@ -215,11 +215,6 @@ export struct PropertyControl {
       this.control.type === CapabilityControlType.VOLUME;
   }
 
-  @Styles
-  cardPressedStyle() {
-    .backgroundColor(HwColor.background)
-  }
-
   /** 当前主题色：读 accentColor 建立依赖，否则会停留在旧色 */
   private accent(): string {
     return this.accentColor.length > 0 ? this.accentColor : HwColor.primary;
@@ -241,7 +236,6 @@ export struct PropertyControl {
         .width('100%')
         .constraintSize({ minHeight: 104 })
         .justifyContent(FlexAlign.SpaceBetween)
-        .stateStyles({ pressed: this.cardPressedStyle })
       }
     } else {
       MaterialCard({
@@ -253,7 +247,6 @@ export struct PropertyControl {
           this.wideContent()
         }
         .width('100%')
-        .stateStyles({ pressed: this.cardPressedStyle })
       }
     }
   }
