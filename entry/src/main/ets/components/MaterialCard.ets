@@ -22,6 +22,8 @@
 import { LengthMetrics } from '@kit.ArkUI';
 import { applyMaterialCarrier, isApi26OrAbove, pressLightColor } from '../utils/SystemMaterial';
 import { HwGlassCardColor, HwRadius, withAlpha } from '../utils/DesignTokens';
+import { PRESS_GLOW_COLOR_KEY, PRESS_GLOW_PUBLISH_MS, PRESS_GLOW_X_KEY, PRESS_GLOW_Y_KEY,
+  publishPressGlow } from '../utils/PressGlowBeacon';
 
 /**
  * 流光光晕的半径（vp）。
@@ -51,6 +53,20 @@ const PRESS_SPILL_RADIUS: number = 110;
 const PRESS_SPILL_ALPHA: number = 0.14;
 /** 溢出光晕的画布边长，理由同 §7.9：必须 ≥ 2×半径，否则光斑被画布直边切断 */
 const PRESS_SPILL_SIZE: number = PRESS_SPILL_RADIUS * 2;
+/**
+ * 邻卡边缘高光的触发距离与最亮值。
+ *
+ * 光距离某条边在 `RIM_RANGE` 以内，那条边就开始亮；越近越亮，超过就完全不亮。
+ * 只亮**朝向光的那几条边**——整张卡一圈都亮就成了「选中态」，不是反光。
+ */
+const RIM_RANGE: number = 120;
+/** 边缘高光的最大不透明度 */
+const RIM_MAX_ALPHA: number = 0.55;
+/** 边缘高光的线宽（vp）。比卡片自带描边略粗，才盖得住、显得像反光 */
+const RIM_WIDTH: number = 2;
+/** 高光最短 / 最长长度（vp）：离光越近铺得越长 */
+const RIM_MIN_SPAN: number = 48;
+const RIM_MAX_SPAN: number = 190;
 
 /**
  * 卡片沉浸光感承载层。
@@ -233,6 +249,17 @@ export struct MaterialCard {
   private lastAreaX: number = 0;
   private lastAreaY: number = 0;
   private areaReady: boolean = false;
+  /** 上次广播光源的时间戳，用于节流（`publishGlow`） */
+  private lastPublishMs: number = 0;
+  /**
+   * 卡片在 `Area.globalPosition` 那套坐标里的原点。
+   *
+   * 广播给邻卡的光源位置**必须用这套坐标**：邻卡量自己矩形用的也是它。
+   * 曾经把窗口坐标（`windowX/Y`）直接广播出去，两套原点差着一个常量，
+   * 结果算出来的距离全是错的——该亮的是上边，亮的却是右边。
+   */
+  private cardAreaX: number = 0;
+  private cardAreaY: number = 0;
 
   /** 对应原卡片容器上的 .onClick()。 */
   cardOnClick: () => void = (): void => {
@@ -312,6 +339,9 @@ export struct MaterialCard {
     }
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       this.glowOn = false;
+      // 立刻熄灭，不走节流：不然松手后邻卡的高光还要挂 40ms 才散
+      this.lastPublishMs = 0;
+      publishPressGlow(0, 0, '');
       return;
     }
     if (event.type !== TouchType.Down && event.type !== TouchType.Move) {
@@ -330,6 +360,7 @@ export struct MaterialCard {
     this.lastTouchWinY = touch.windowY;
     this.syncGlowPosition();
     this.glowOn = true;
+    this.publishGlow();
   }
 
   /**
@@ -435,6 +466,10 @@ export struct MaterialCard {
     }
     // 流光压在材质之上、内容之下：光打在玻璃表面，文字仍然压在光上面保持清晰
     this.pressGlowLayer()
+    // 边缘高光压在最上面：它是玻璃的边，本来就该盖住内容。
+    // 不区分「自己发光」还是「被别人照到」——两种情况都只亮被光覆盖的那一段，
+    // 整圈描边会变成选中态（第一版就是这么错的）
+    PressRim({ rimRadius: this.cardRadius })
     Flex({
       direction: this.cardDirection,
       space: { main: LengthMetrics.vp(this.cardSpace) },
@@ -491,6 +526,22 @@ export struct MaterialCard {
    *
    * `hitTestBehavior(None)` 保证它不吃触摸。
    */
+  /**
+   * 把光源位置广播出去，让附近的卡片在自己的边缘上画高光。
+   *
+   * 按 `PRESS_GLOW_PUBLISH_MS` 节流：触摸事件约 8ms 一个，
+   * 逐个转发会让满屏卡片每帧重绘好几次。
+   */
+  private publishGlow(): void {
+    const now: number = Date.now();
+    if (now - this.lastPublishMs < PRESS_GLOW_PUBLISH_MS) {
+      return;
+    }
+    this.lastPublishMs = now;
+    // 用 globalPosition 那套坐标广播：邻卡量自己矩形用的就是它，两边必须同一个原点
+    publishPressGlow(this.cardAreaX + this.glowX, this.cardAreaY + this.glowY, this.glowAccent());
+  }
+
   @Builder
   pressGlowLayer() {
     if (this.glowVisible()) {
@@ -544,6 +595,8 @@ export struct MaterialCard {
       this.lastAreaX = gx;
       this.lastAreaY = gy;
       this.areaReady = true;
+      this.cardAreaX = gx;
+      this.cardAreaY = gy;
     })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
@@ -597,6 +650,8 @@ export struct MaterialCard {
       this.lastAreaX = gx;
       this.lastAreaY = gy;
       this.areaReady = true;
+      this.cardAreaX = gx;
+      this.cardAreaY = gy;
     })
     .hoverEffect(this.effectiveHoverEffect())
     .onTouch((event: TouchEvent): void => {
@@ -686,6 +741,178 @@ export struct MaterialSheetPanel {
     .backgroundColor(this.materialActive() ? Color.Transparent
       : (this.cardSurface.length > 0 ? this.cardSurface : HwGlassCardColor.surface))
     .clip(true)
+  }
+}
+
+/**
+ * 边缘高光（液态玻璃的「反光」）。
+ *
+ * 光从被按住的那张卡溢出来，落在旁边卡片的边上——旁边那张卡**自己**在边缘画一段高光。
+ * 为什么必须各画各的，见 `PressGlowBeacon` 顶部的说明：画在别人下面看不见，
+ * 画在别人上面又会把人家内部照亮，只有自己画自己的边才是「亮在边上、不亮在里面」。
+ *
+ * **只画被光照到的那一段，不给整张卡描边。** 一整圈边框是「选中态」，
+ * 不是反光：光只会落在离它最近的那一小段边上，其余三边该是暗的。
+ * 所以这里按「光到这条边的距离」算出亮度与光斑长度，位置钉在光的正投影处。
+ *
+ * 位置信息由组件**自己**量（`onAreaChange`），不从父组件传：
+ * 卡片在列表里滚动时位置一直在变，走 @Prop 就得让父组件跟着重绘、
+ * 连材质一起反复重建；自己量的话滚动时只重绘这一层薄薄的高光。
+ */
+@Component
+export struct PressRim {
+  /** 光源位置与颜色，由被按住的卡片广播（见 PressGlowBeacon） */
+  @StorageProp(PRESS_GLOW_X_KEY) lightX: number = -100000;
+  @StorageProp(PRESS_GLOW_Y_KEY) lightY: number = -100000;
+  @StorageProp(PRESS_GLOW_COLOR_KEY) lightColor: string = '';
+  /** 与卡片一致的圆角，避免高光在圆角处露出直角 */
+  @Prop rimRadius: Length = 20;
+
+  /** 本组件的窗口矩形，由 onAreaChange 维护 */
+  @State winX: number = 0;
+  @State winY: number = 0;
+  @State winW: number = 0;
+  @State winH: number = 0;
+
+  /** 点到线段的距离。光源在卡片斜侧方时，靠外那条边必须更暗，垂距模型算不出这个差别 */
+  private static segmentDistance(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx: number = x2 - x1;
+    const dy: number = y2 - y1;
+    const span: number = dx * dx + dy * dy;
+    let t: number = 0;
+    if (span > 0) {
+      t = ((px - x1) * dx + (py - y1) * dy) / span;
+      t = Math.min(Math.max(t, 0), 1);
+    }
+    const cx: number = x1 + t * dx;
+    const cy: number = y1 + t * dy;
+    return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+  }
+
+  /** 光到某条边的距离 */
+  private edgeDistance(edge: string): number {
+    const left: number = this.winX;
+    const right: number = this.winX + this.winW;
+    const top: number = this.winY;
+    const bottom: number = this.winY + this.winH;
+    if (edge === 'top') {
+      return PressRim.segmentDistance(this.lightX, this.lightY, left, top, right, top);
+    }
+    if (edge === 'bottom') {
+      return PressRim.segmentDistance(this.lightX, this.lightY, left, bottom, right, bottom);
+    }
+    if (edge === 'left') {
+      return PressRim.segmentDistance(this.lightX, this.lightY, left, top, left, bottom);
+    }
+    return PressRim.segmentDistance(this.lightX, this.lightY, right, top, right, bottom);
+  }
+
+  /**
+   * 这条边上的衰减系数（0~1，0 表示照不到）。
+   *
+   * 平方衰减：光晕边缘更软，不会在 `RIM_RANGE` 处看到一条硬边。
+   */
+  private edgeFalloff(edge: string): number {
+    if (this.lightColor.length === 0 || this.winW <= 0 || this.winH <= 0) {
+      return 0;
+    }
+    const distance: number = this.edgeDistance(edge);
+    if (distance >= RIM_RANGE) {
+      return 0;
+    }
+    const t: number = 1 - distance / RIM_RANGE;
+    return t * t;
+  }
+
+  /** 高光颜色，照不到时全透明 */
+  private glintColor(edge: string): ResourceColor {
+    const falloff: number = this.edgeFalloff(edge);
+    if (falloff <= 0) {
+      return Color.Transparent;
+    }
+    return withAlpha(this.lightColor, falloff * RIM_MAX_ALPHA);
+  }
+
+  /** 高光长度：离得越近铺得越长，但最短也留一小截，免得缩成一个点 */
+  private glintSpan(edge: string): number {
+    const falloff: number = this.edgeFalloff(edge);
+    const along: number = this.isHorizontal(edge) ? this.winW : this.winH;
+    const wanted: number = RIM_MIN_SPAN + (RIM_MAX_SPAN - RIM_MIN_SPAN) * falloff;
+    return Math.max(1, Math.min(along, wanted));
+  }
+
+  private isHorizontal(edge: string): boolean {
+    return edge === 'top' || edge === 'bottom';
+  }
+
+  /** 高光沿边方向的起点：钉在光源的正投影上，并向内收进卡片范围 */
+  private glintOffset(edge: string): number {
+    const horizontal: boolean = this.isHorizontal(edge);
+    const along: number = horizontal ? this.winW : this.winH;
+    const origin: number = horizontal ? this.winX : this.winY;
+    const light: number = horizontal ? this.lightX : this.lightY;
+    const span: number = this.glintSpan(edge);
+    return Math.min(Math.max(light - origin - span / 2, 0), Math.max(0, along - span));
+  }
+
+  private glintX(edge: string): number {
+    if (edge === 'top' || edge === 'bottom') {
+      return this.glintOffset(edge);
+    }
+    return edge === 'left' ? 0 : Math.max(0, this.winW - RIM_WIDTH);
+  }
+
+  private glintY(edge: string): number {
+    if (edge === 'left' || edge === 'right') {
+      return this.glintOffset(edge);
+    }
+    return edge === 'top' ? 0 : Math.max(0, this.winH - RIM_WIDTH);
+  }
+
+  /** 一段边上的高光。两端淡出、中间最亮，像光在玻璃棱上的一小片反光 */
+  @Builder
+  glint(edge: string) {
+    if (this.edgeFalloff(edge) > 0) {
+      Column()
+        .width(this.isHorizontal(edge) ? this.glintSpan(edge) : RIM_WIDTH)
+        .height(this.isHorizontal(edge) ? RIM_WIDTH : this.glintSpan(edge))
+        .position({ x: this.glintX(edge), y: this.glintY(edge) })
+        .borderRadius(RIM_WIDTH / 2)
+        .linearGradient({
+          angle: this.isHorizontal(edge) ? 90 : 0,
+          colors: [
+            [Color.Transparent, 0],
+            [this.glintColor(edge), 0.35],
+            [this.glintColor(edge), 0.65],
+            [Color.Transparent, 1]
+          ]
+        })
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
+    }
+  }
+
+  build() {
+    Stack() {
+      this.glint('top')
+      this.glint('bottom')
+      this.glint('left')
+      this.glint('right')
+    }
+    .width(LayoutPolicy.matchParent)
+    .height(LayoutPolicy.matchParent)
+    .borderRadius(this.rimRadius)
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
+    .accessibilityLevel('no')
+    .onAreaChange((_oldArea: Area, newArea: Area): void => {
+      const gx: number = typeof newArea.globalPosition.x === 'number' ? newArea.globalPosition.x : this.winX;
+      const gy: number = typeof newArea.globalPosition.y === 'number' ? newArea.globalPosition.y : this.winY;
+      this.winX = gx;
+      this.winY = gy;
+      this.winW = typeof newArea.width === 'number' ? newArea.width : 0;
+      this.winH = typeof newArea.height === 'number' ? newArea.height : 0;
+    })
   }
 }
 
