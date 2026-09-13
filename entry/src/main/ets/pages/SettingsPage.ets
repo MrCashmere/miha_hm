@@ -170,6 +170,7 @@ struct SettingsPage {
     AppSettingsStore.delete('cardTintEnabled');
     AppSettingsStore.delete('customAccentFullAccess');
     AppSettingsStore.delete('immersivePressGlow');
+    AppSettingsStore.delete('cardGlowTouch');
     AppStorage.setOrCreate('hideOfflineDevices', false);
     AppStorage.setOrCreate('selectedHomeId', '');
     AppStorage.setOrCreate('selectedHomeName', '');
@@ -200,6 +201,7 @@ struct SettingsPage {
     AppStorage.setOrCreate('cardTintEnabled', false);
     AppStorage.setOrCreate('customAccentFullAccess', false);
     AppStorage.setOrCreate('immersivePressGlow', true);
+    AppStorage.setOrCreate('cardGlowTouch', false);
     AppStorage.setOrCreate('accentColor', DEFAULT_ACCENT_VALUE);
     AppStorage.setOrCreate('isDarkMode', false);
     this.hideOfflineDevices = false;

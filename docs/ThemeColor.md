@@ -653,6 +653,28 @@ cardBody() {
 | **只在卡片内**：光不溢到相邻卡片上 | §5.9.1 的分层与裁切 |
 | **底栏同步**：底部 HdsTab 悬浮栏的流光同时换成主题色 | §5.9.2 |
 
+另有一个**「卡片流光触感」**开关（`cardGlowTouch`，**默认关闭**），只决定卡片上
+画不画手指底下那层跟手光斑：
+
+- **关**（默认）：只留溢出到卡间缝隙的**环境光**（映照），没有会跟着手指走的触碰反馈光；
+- **开**：两层都画，也就是完整的跟手流光。
+
+它**只作用于卡片**，底部 HdsTab 悬浮栏的流光不受它影响（那一处仍然只跟
+「主题色流光」开关走）。实现上就是把 `pressGlowLayer()` 的渲染条件从
+`glowVisible()` 换成 `touchGlowVisible()`，而 `glowSpillLayer()` 始终用 `glowVisible()`：
+
+```ts
+private glowVisible(): boolean {        // 有光可画：按下 + 主题色流光可用
+  return this.glowOn && this.glowAccent().length > 0;
+}
+private spillVisible(): boolean {       // 环境光：不受卡片流光触感影响
+  return this.glowVisible();
+}
+private touchGlowVisible(): boolean {   // 跟手光斑：要额外打开卡片流光触感
+  return this.glowVisible() && this.glowTouchEnabled;
+}
+```
+
 #### 5.9.1 卡片上的跟手光晕
 
 分两层（`MaterialCard.cardBody`）：

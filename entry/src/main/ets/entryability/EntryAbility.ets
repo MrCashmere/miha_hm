@@ -30,7 +30,7 @@ import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { loadCustomFonts } from '../utils/CustomFonts';
-import { applyAppTheme, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, isPresetAccentKey, PRESS_GLOW_STORAGE, resolveAccentColor } from '../utils/DesignTokens';
+import { applyAppTheme, CARD_GLOW_TOUCH_STORAGE, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, isPresetAccentKey, PRESS_GLOW_STORAGE, resolveAccentColor } from '../utils/DesignTokens';
 
 const DOMAIN = 0x0000;
 
@@ -120,6 +120,9 @@ export default class EntryAbility extends UIAbility {
     const customAccentFullAccess = AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false);
     AppStorage.setOrCreate(CARD_TINT_STORAGE, cardTintEnabled);
     AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, customAccentFullAccess);
+    // 卡片流光触感：卡片在首帧就要知道画不画跟手光斑，必须先落进 AppStorage
+    AppStorage.setOrCreate(CARD_GLOW_TOUCH_STORAGE,
+      AppSettingsStore.getBoolean(CARD_GLOW_TOUCH_STORAGE, false));
     // 主题色流光开关：材质承载层构造流光时要读它，必须在首帧渲染前就位
     AppStorage.setOrCreate(PRESS_GLOW_STORAGE,
       AppSettingsStore.getBoolean(PRESS_GLOW_STORAGE, true));
@@ -323,6 +326,8 @@ export default class EntryAbility extends UIAbility {
       AppSettingsStore.getBoolean(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, false));
     AppStorage.setOrCreate(PRESS_GLOW_STORAGE,
       AppSettingsStore.getBoolean(PRESS_GLOW_STORAGE, true));
+    AppStorage.setOrCreate(CARD_GLOW_TOUCH_STORAGE,
+      AppSettingsStore.getBoolean(CARD_GLOW_TOUCH_STORAGE, false));
     // 同样要把已保存的主题色传入，否则系统深浅色变化会把背景染色重置掉
     const accentColor = resolveAccentColor(
       EntryAbility.resolveAccentKey(),

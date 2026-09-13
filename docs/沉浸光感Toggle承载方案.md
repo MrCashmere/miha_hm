@@ -240,6 +240,10 @@ MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 沉浸光感的按压反馈有两处，颜色都由设置页的**「主题色流光」**开关
 （`immersivePressGlow`，默认开）统一控制：开 = 主题色，关 = 系统默认白光。
 
+卡片上还多一个**「卡片流光触感」**开关（`cardGlowTouch`，**默认关**）：
+关 = 只留溢出到卡间缝隙的环境光，开 = 再叠一层手指底下的跟手光斑。
+它**只作用于卡片**，底栏那一处不读这个键。
+
 ### 9.1 卡片上的跟手光晕
 
 分两层，都在 `MaterialCard.cardBody` 里：

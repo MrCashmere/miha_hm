@@ -146,6 +146,13 @@ export struct MaterialCard {
    * 光晕要等下一次重建才生效。
    */
   @StorageProp('immersivePressGlow') pressGlowSwitch: boolean = true;
+  /**
+   * 卡片流光触感（默认关）。
+   *
+   * 关：只画溢出到卡间缝隙的环境光；开：再叠一层手指底下的跟手光斑。
+   * 底栏的流光与它无关，不受影响。
+   */
+  @StorageProp('cardGlowTouch') glowTouchEnabled: boolean = false;
 
   /**
    * 卡片底色（含可选的「卡片沾色」）。
@@ -279,9 +286,24 @@ export struct MaterialCard {
     return pressLightColor(this.pressGlowSwitch, this.accentColor);
   }
 
-  /** 是否正在显示跟手光晕 */
+  /** 是否有光可画（按下 + 主题色流光可用） */
   private glowVisible(): boolean {
     return this.glowOn && this.glowAccent().length > 0;
+  }
+
+  /**
+   * 是否画「溢出到卡间缝隙的环境光」。
+   *
+   * 这一层**不受「卡片流光触感」影响**：那个开关管的是手指底下有没有跟手光斑，
+   * 环境光始终保留——「关闭后只映照流光」说的就是它。
+   */
+  private spillVisible(): boolean {
+    return this.glowVisible();
+  }
+
+  /** 是否画手指底下的跟手光斑：要额外打开「卡片流光触感」 */
+  private touchGlowVisible(): boolean {
+    return this.glowVisible() && this.glowTouchEnabled;
   }
 
   /**
@@ -384,7 +406,7 @@ export struct MaterialCard {
    */
   @Builder
   glowSpillLayer() {
-    if (this.glowVisible()) {
+    if (this.spillVisible()) {
       Stack() {
         Column()
           .width(PRESS_SPILL_SIZE)
@@ -493,7 +515,7 @@ export struct MaterialCard {
    */
   @Builder
   pressGlowLayer() {
-    if (this.glowVisible()) {
+    if (this.touchGlowVisible()) {
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)

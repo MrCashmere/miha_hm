@@ -86,6 +86,15 @@ export const CARD_TINT_STORAGE: string = 'cardTintEnabled';
 /** 高权限自定义主题色：打开后自定义色也参与页面背景染色（默认只允许内置预设色） */
 export const CUSTOM_ACCENT_FULL_ACCESS_STORAGE: string = 'customAccentFullAccess';
 /**
+ * 卡片「流光触感」开关（默认关闭）。
+ *
+ * 关：按压卡片只保留**溢出到卡间缝隙的环境光**（映照）；
+ * 开：手指底下那团跟手光斑一起亮，也就是完整的「触碰反馈的流光」。
+ * 只作用于卡片，**不影响底部 HdsTab 悬浮栏的流光**。
+ */
+export const CARD_GLOW_TOUCH_STORAGE: string = 'cardGlowTouch';
+
+/**
  * 沉浸光感「主题色流光」开关。
  *
  * 开启：按压卡片 / 圆形图标按钮的流光与光晕用主题色；

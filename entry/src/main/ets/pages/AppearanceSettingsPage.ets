@@ -25,7 +25,7 @@ import { resourceManager } from '@kit.LocalizationKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, HwColor, HwRadius, HwSpace, PRESS_GLOW_STORAGE, applyAppTheme, normalizeAccentHex, normalizeAccentList, onAccentColor, reloadAppTheme, resolveAccentColor, resolvePageBackground,
+import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, CARD_GLOW_TOUCH_STORAGE, CARD_TINT_STORAGE, CUSTOM_ACCENT_FULL_ACCESS_STORAGE, DARK_MODE_DARK, DARK_MODE_LIGHT, DARK_MODE_PREF_STORAGE, DARK_MODE_SYSTEM, DEFAULT_ACCENT_KEY, HwColor, HwRadius, HwSpace, PRESS_GLOW_STORAGE, applyAppTheme, normalizeAccentHex, normalizeAccentList, onAccentColor, reloadAppTheme, resolveAccentColor, resolvePageBackground,
   withAlpha } from '../utils/DesignTokens';
 import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
@@ -79,6 +79,8 @@ struct AppearanceSettingsPage {
   @StorageLink('cardTintEnabled') cardTintEnabled: boolean = false;
   /** 高权限自定义主题色：打开后自定义色也参与页面背景染色 */
   @StorageLink('customAccentFullAccess') customAccentFullAccess: boolean = false;
+  /** 卡片流光触感：打开后按压卡片多一层跟手的触碰反馈光斑（关闭只有环境映照光） */
+  @StorageLink('cardGlowTouch') cardGlowTouch: boolean = false;
   /** 沉浸光感主题色流光：打开后按压的流光/光晕用主题色，关闭回到系统白光 */
   @StorageLink('immersivePressGlow') pressGlowEnabled: boolean = true;
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
@@ -461,6 +463,18 @@ struct AppearanceSettingsPage {
     AppStorage.setOrCreate(CUSTOM_ACCENT_FULL_ACCESS_STORAGE, enabled);
     reloadAppTheme();
     FeedbackLogService.recordOperation('UI', `高权限自定义主题色 ${enabled ? '开' : '关'}`);
+  }
+
+  /**
+   * 卡片流光触感开关。
+   *
+   * 只改卡片上画不画跟手光斑，不动任何颜色 token；
+   * 卡片订阅了这个键，写一次即可重绘。**与底栏流光无关。**
+   */
+  private setCardGlowTouch(enabled: boolean): void {
+    AppSettingsStore.setBoolean(CARD_GLOW_TOUCH_STORAGE, enabled);
+    AppStorage.setOrCreate(CARD_GLOW_TOUCH_STORAGE, enabled);
+    FeedbackLogService.recordOperation('UI', `卡片流光触感 ${enabled ? '开' : '关'}`);
   }
 
   /**
@@ -1084,6 +1098,33 @@ struct AppearanceSettingsPage {
                   .selectedColor(this.accentOrPrimary())
                   .onChange((isOn: boolean): void => {
                     this.setPressGlow(isOn);
+                  })
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+
+              Divider()
+                .color('#14000000')
+
+              Row({ space: HwSpace.md }) {
+                Column({ space: 4 }) {
+                  Text('卡片流光触感')
+                    .fontFamily(this.appFontFamily('卡片流光触感'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(15)
+                    .fontColor(HwColor.textPrimary)
+                  Text('开启后按压卡片会多一层跟手的触碰反馈光；关闭只有映照到卡间缝隙的环境光。不影响底部标签栏')
+                    .fontFamily(this.appFontFamily('开启后按压卡片会多一层跟手的触碰反馈光；关闭只有映照到卡间缝隙的环境光。不影响底部标签栏'))
+                    .fontWeight(this.appFontWeight())
+                    .fontSize(12)
+                    .fontColor(HwColor.textSecondary)
+                }
+                .alignItems(HorizontalAlign.Start)
+                .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.cardGlowTouch })
+                  .selectedColor(this.accentOrPrimary())
+                  .onChange((isOn: boolean): void => {
+                    this.setCardGlowTouch(isOn);
                   })
               }
               .width('100%')
