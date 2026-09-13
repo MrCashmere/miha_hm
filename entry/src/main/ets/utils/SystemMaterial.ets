@@ -107,11 +107,21 @@ let interactiveMaterialResolved: boolean = false;
 /**
  * 材质厚薄档位，集中一处便于按真机观感调档。
  *
+ * **必须惰性求值，不能写成模块级常量。**
+ * 曾经写的是 `export const MATERIAL_STYLE = uiMaterial.ImmersiveStyle.THIN`，
+ * 这行会在**模块加载期**就解引用 `uiMaterial`。而 uiMaterial 是 API 26 才有的接口
+ * （SDK 标注 `@since 26.0.0`），在 API 24 设备上 `uiMaterial.ImmersiveStyle` 是 undefined，
+ * 取 `.THIN` 抛出的 TypeError 发生在**任何 try/catch 之外**，
+ * 结果不只是没有光感，而是整个模块加载失败、**应用启动即闪退**。
+ * 本文件其它部分都遵守了「不在模块加载期构造」的原则，唯独这里漏了。
+ *
  * **调档只用类型断言，不要写类型标注**：本工程 compileSdkVersion 是 26，
  * 能用全部档位；而一旦写成 `const X: uiMaterial.ImmersiveStyle = ...` 这种
  * 带类型标注的写法，低版本 SDK 上会出现类型不相容的编译错误。
  */
-export const MATERIAL_STYLE = uiMaterial.ImmersiveStyle.THIN as uiMaterial.ImmersiveStyle;
+function materialStyle(): uiMaterial.ImmersiveStyle {
+  return uiMaterial.ImmersiveStyle.THIN as uiMaterial.ImmersiveStyle;
+}
 
 /**
  * 材质构造。
@@ -138,14 +148,14 @@ function buildImmersiveMaterial(interactive: boolean = false): uiMaterial.Materi
       // 《沉浸式系统材质视效》：interactive 开启按压弹性形变；
       // lightEffect 传入有效对象即启用流光跟随，color 缺省为 Color.White。
       return new uiMaterial.ImmersiveMaterial({
-        style: MATERIAL_STYLE,
+        style: materialStyle(),
         interactive: true,
         lightEffect: {}
       });
     }
     // 静态材质只传 style，避免可选字段影响材质本身。
     return new uiMaterial.ImmersiveMaterial({
-      style: MATERIAL_STYLE
+      style: materialStyle()
     });
   } catch (err) {
     materialError = String((err as Error)?.message ?? err);
