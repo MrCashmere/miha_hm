@@ -63,13 +63,6 @@ const SIDE_BAR_WIDTH_DEFAULT: number = 96;
 const SIDE_BAR_WIDTH_MIN: number = 80;
 const SIDE_BAR_WIDTH_MAX: number = 320;
 const MAX_CONTENT_WIDTH: number = 1080;
-/**
- * 切 Tab 复位列表的分帧重试参数。
- * Scroller 的滚动指令在容器尚未完成布局时会被直接丢弃且不报错，单发一次不可靠；
- * 4 帧 ≈ 64ms，足够跨过 TabContent 的挂载与布局，又短到不会和用户抢滚动。
- */
-const RECENTER_MAX_ATTEMPTS: number = 4;
-const RECENTER_FRAME_MS: number = 16;
 
 /** 房间筛选 chip 的哨兵 key：分别代表「全部」与「未归类到任何房间」 */
 const ROOM_ALL_KEY: string = '__all_rooms__';
@@ -230,13 +223,6 @@ struct HomePage {
   @State errorMessage: string = '';
   @State dataState: DataSourceState = DataSourceState.ONLINE;
   @State activeTab: number = 0;
-  /** 已复位过的 Tab 下标：避免 onChange 对同一下标连续回调时重复复位 */
-  private recenteredTab: number = -1;
-  /**
-   * 复位请求令牌。每次发起复位、或用户触摸列表时自增，
-   * 旧的复位链读到令牌变了就自行退出——绝不会把用户正在看的列表拉回顶部。
-   */
-  private recenterToken: number = 0;
   @State accountUserId: string = '';
   @State accountNickname: string = '';
   @State accountAvatarUrl: string = '';
@@ -2138,7 +2124,7 @@ struct HomePage {
           iconSize: 18,
           onAction: (): void => {
             FeedbackLogService.recordOperation('UI', '列表回正');
-            this.scrollCurrentTabToTop(this.activeTab);
+            this.resetPaneScrolls();
           }
         })
         IconCircleButton({
@@ -2807,15 +2793,11 @@ struct HomePage {
         .padding({ left: this.contentPadding(), right: this.contentPadding() })
       }
       .width('100%')
-      .height('100%')
+      // 不再同时设 height('100%') 与 layoutWeight(1)：两套尺寸来源互相冲突，
+      // 交给 layoutWeight 填满 Column 的剩余空间即可（对齐 CLink 的 Scroll 结构）。
       .align(this.cardsFromTop ? Alignment.Top : Alignment.Center)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onTouch((event: TouchEvent) => {
-        if (event.type === TouchType.Down) {
-          this.abortRecenter();
-        }
-      })
       .layoutWeight(1)
     }
     .width('100%')
@@ -4214,15 +4196,11 @@ struct HomePage {
         this.homeTabContent()
       }
       .width('100%')
-      .height('100%')
+      // 不再同时设 height('100%') 与 layoutWeight(1)：两套尺寸来源互相冲突，
+      // 交给 layoutWeight 填满 Column 的剩余空间即可（对齐 CLink 的 Scroll 结构）。
       .align(this.cardsFromTop ? Alignment.Top : Alignment.Center)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onTouch((event: TouchEvent) => {
-        if (event.type === TouchType.Down) {
-          this.abortRecenter();
-        }
-      })
       .layoutWeight(1)
     }
     .width('100%')
@@ -4244,11 +4222,6 @@ struct HomePage {
       .align(this.cardsFromTop ? Alignment.Top : Alignment.Center)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onTouch((event: TouchEvent) => {
-        if (event.type === TouchType.Down) {
-          this.abortRecenter();
-        }
-      })
     }
     .width('100%')
     .height('100%')
@@ -4265,15 +4238,11 @@ struct HomePage {
         this.mineTabContent()
       }
       .width('100%')
-      .height('100%')
+      // 不再同时设 height('100%') 与 layoutWeight(1)：两套尺寸来源互相冲突，
+      // 交给 layoutWeight 填满 Column 的剩余空间即可（对齐 CLink 的 Scroll 结构）。
       .align(this.cardsFromTop ? Alignment.Top : Alignment.Center)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
-      .onTouch((event: TouchEvent) => {
-        if (event.type === TouchType.Down) {
-          this.abortRecenter();
-        }
-      })
       .layoutWeight(1)
     }
     .width('100%')
@@ -4295,7 +4264,7 @@ struct HomePage {
     .height(52)
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
-      this.onTabSelected(index);
+      this.onTabChanged(index);
     })
   }
 
@@ -4337,117 +4306,25 @@ struct HomePage {
   }
 
   /**
-   * Tab 切换完成后的复位入口（绑定 HdsTabs.onChange）。
+   * Tab 切换（绑定 HdsTabs.onChange，切换动画结束后触发）。
    *
-   * HdsTabs 官方声明里两个回调的时机差别：
-   *   onSelected：切换动画「开始时」触发，此时目标页还没完成布局；
-   *   onChange  ：切换动画「结束后」触发，此时目标页已完成布局。
-   * 而 Scroller 的滚动指令在容器未完成布局时会被直接丢弃（文档：不生效也不报错），
-   * 所以复位必须挂在 onChange 上，onSelected 只负责切状态。
-   *
-   * 这里顺带把 activeTab 同步一次：万一某个版本只回调了 onChange，
-   * 少了这一步 activeTab 会停在旧值，复位链的「还在目标 Tab 上」判断会当场自杀。
-   */
-  private onTabChanged(index: number): void {
-    if (this.activeTab !== index) {
-      this.activeTab = index;
-    }
-    if (this.recenteredTab === index) {
-      // 同一个下标连续回调（如启动时恢复默认页）不重复复位
-      return;
-    }
-    this.recenteredTab = index;
-    this.scrollCurrentTabToTop(index);
-  }
-
-  /**
-   * 把指定 Tab 的滚动位置复位到顶部。
-   *
-   * 官方 Scroller 用法要点：`Scroller` 必须通过 `Scroll(scroller)` 与组件一一绑定，
-   * 未绑定或组件未完成布局时调用滚动指令无效（不报错、也不生效）。
-   */
-  private scrollCurrentTabToTop(index: number): void {
-    const target: Scroller = this.scrollerForTab(index);
-    const token: number = ++this.recenterToken;
-    this.recenterStep(target, index, token, 0);
-  }
-
-  /**
-   * 分帧重试复位。
-   *
-   * 为什么不能只发一次：Scroller 文档写明「未绑定组件时接口不可用」，而 TabContent
-   * 切换后目标页的 Scroll 要到下一帧才完成挂载与布局，这一帧内发出的滚动指令会被
-   * 静默丢弃。所以按帧重发，直到读出偏移量为 0（说明真的到顶了）为止。
-   *
-   * 退出条件有三个，任何一个命中就停：
-   *   1. 令牌变了——用户触摸了列表，或又切了页；
-   *   2. 已经不在目标 Tab 上；
-   *   3. 已经把 RECENTER_MAX_ATTEMPTS 帧跑完。
-   */
-  private recenterStep(target: Scroller, index: number, token: number, attempt: number): void {
-    setTimeout((): void => {
-      if (token !== this.recenterToken || this.activeTab !== index) {
-        return;
-      }
-      try {
-        target.scrollEdge(Edge.Top);
-      } catch (err) {
-        Logger.error('scrollEdge failed, %{public}s',
-          err instanceof Error ? err.message : String(err));
-        return;
-      }
-      // 是否生效只能看偏移量：Scroller 未绑定组件时 currentOffset() 返回 void
-      // （官方文档），此时读 yOffset 抛错，记为 -1。
-      // 日志里 offset=-1 表示没绑上，>0 表示指令被丢弃，0 才是到顶。
-      let offset: number = -1;
-      try {
-        offset = target.currentOffset().yOffset;
-      } catch (readErr) {
-        offset = -1;
-      }
-      Logger.info('Tab %{public}d 第 %{public}d 帧复位，偏移 %{public}d', index, attempt, offset);
-      // 刻意不因 offset===0 提前收工：组件已绑定但尚未完成布局时也可能读到 0，
-      // 那会变成「假成功」。滚动到顶是幂等操作，跑满几帧更稳；
-      // 用户一触摸列表令牌就变，整条链立即退出，不会和用户抢滚动。
-      if (attempt + 1 < RECENTER_MAX_ATTEMPTS) {
-        this.recenterStep(target, index, token, attempt + 1);
-      }
-    }, RECENTER_FRAME_MS);
-  }
-
-  /**
-   * 用户手指落到列表上：放弃尚未完成的复位。
-   * 用 onTouch(Down) 而不是 onScrollStart——后者在滚动组件首次布局和程序化滚动时
-   * 也会触发，拿它当「用户正在滑」的信号会误伤。
-   */
-  private abortRecenter(): void {
-    this.recenterToken++;
-  }
-
-  /** 当前 Tab 对应的 Scroller（每个 pane 一个，必须与 Scroll 组件一一对应） */
-  private scrollerForTab(index: number): Scroller {
-    if (index === this.messagesTabIndex()) {
-      return this.messageScroller;
-    }
-    if (index === this.infoTabIndex()) {
-      return this.infoScroller;
-    }
-    if (index === this.tabMineIndex()) {
-      return this.mineScroller;
-    }
-    return this.homeScroller;
-  }
-
-  /**
-   * Tab 切换时的副作用（绑定 HdsTabs.onSelected，动画开始时触发）。
    * 下标：0 首页 / 1 消息 / 2 信息 / 3 我的（穿戴设备无信息页：0 首页 / 1 消息 / 2 我的）。
    *
-   * 这里只切状态，让标签栏高亮即时跟手；滚动复位不在这里做——
-   * 动画开始时目标页尚未布局，滚动指令会被丢弃，复位改由 onTabChanged 承担。
+   * 三处写法都是刻意的，对照 CLink 的同类实现：
+   *
+   * 1. **只在 onChange 里改 activeTab，不挂 onSelected。**
+   *    `HdsTabs({ index: this.activeTab })` 是受控属性，而官方文档写明
+   *    「构造的状态变量被动态修改」本身就会再触发一次切换。在动画**开始时**
+   *    （onSelected）改它，会让目标页在动画中途重新布局，紧随其后的滚动指令被丢弃。
+   *    CLink 完全不挂 onSelected，这是它与本仓库最大的差异。
+   * 2. **先切状态、再复位滚动**，顺序与 CLink 一致。
+   * 3. **同步复位、一次复位全部四个 Scroller**：不依赖「当前哪个 pane 已完成布局」，
+   *    也不用延时。CLink 就是这么做的；延时一帧反而正好落在重新布局之后。
    */
-  private onTabSelected(index: number): void {
+  private onTabChanged(index: number): void {
     FeedbackLogService.recordOperation('UI', `切换标签 ${index}`);
     this.activeTab = index;
+    this.resetPaneScrolls();
     if (this.isWearable) {
       if (index === 1) {
         // 进消息页才拉消息，避免首屏多打一次云端接口
@@ -4471,6 +4348,24 @@ struct HomePage {
     if (index === 3) {
       this.loadData(true, true);
       this.loadAccount();
+    }
+  }
+
+  /**
+   * 把四个 pane 的滚动位置一起复位到顶部。
+   *
+   * 逐个独立 try/catch：尚未挂载的 pane 调用 scrollEdge 会抛异常，属正常情况，
+   * 不应影响其余几个 —— CLink 也是这么写的。
+   */
+  private resetPaneScrolls(): void {
+    const scrollers: Scroller[] = [
+      this.homeScroller, this.messageScroller, this.infoScroller, this.mineScroller
+    ];
+    for (let i = 0; i < scrollers.length; i++) {
+      try {
+        scrollers[i].scrollEdge(Edge.Top);
+      } catch (err) {
+      }
     }
   }
 
@@ -4500,12 +4395,10 @@ struct HomePage {
           .barOverlap(false)
           .scrollable(false)
           .animationDuration(this.homeSmoothSwitch ? 300 : 0)
-          .onSelected((index: number) => {
-            // 动画开始：只切状态，保证标签栏高亮即时跟手
-            this.onTabSelected(index);
-          })
+          // 刻意不挂 onSelected：`index: this.activeTab` 是受控属性，
+          // 在动画开始时改它会让 HdsTabs 再触发一次切换、目标页重新布局，
+          // 滚动指令随之被丢弃。详见 onTabChanged 的说明。
           .onChange((index: number) => {
-            // 动画结束、目标页完成布局：这时发滚动指令才生效
             this.onTabChanged(index);
           })
 
@@ -4551,12 +4444,10 @@ struct HomePage {
           .barOverlap(true)
           .scrollable(false)
           .animationDuration(this.homeSmoothSwitch ? 300 : 0)
-          .onSelected((index: number) => {
-            // 动画开始：只切状态，保证标签栏高亮即时跟手
-            this.onTabSelected(index);
-          })
+          // 刻意不挂 onSelected：`index: this.activeTab` 是受控属性，
+          // 在动画开始时改它会让 HdsTabs 再触发一次切换、目标页重新布局，
+          // 滚动指令随之被丢弃。详见 onTabChanged 的说明。
           .onChange((index: number) => {
-            // 动画结束、目标页完成布局：这时发滚动指令才生效
             this.onTabChanged(index);
           })
           .barFloatingStyle({
