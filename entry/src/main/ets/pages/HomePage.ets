@@ -2068,32 +2068,46 @@ struct HomePage {
     .justifyContent(FlexAlign.Center)
   }
 
+  /** 底栏未选中图标色。走方法避免在表达式里直接读模块级对象（登记不上依赖） */
+  private tabInactiveColor(): string {
+    return HwColor.textSecondary;
+  }
+
+  /**
+   * 底栏样式。
+   *
+   * **高亮色必须读 `this.accent()`，不能写 `HwColor.primary`。**
+   * 后者是模块级对象的属性，ArkUI 按表达式登记依赖时读不到它，
+   * 切主题色后底栏选中图标会一直停在上一套配色——这正是「换主题色后
+   * 底栏高亮没实时更换」的原因。`this.accent()` 读的是订阅变量，
+   * 切色时本方法会重新求值并下发新的 BottomTabBarStyle。
+   */
   tabBarStyle(index: number): BottomTabBarStyle {
     if (index === 0) {
       const homeNormal = new SymbolGlyphModifier($r('sys.symbol.house'));
-      homeNormal.fontColor([HwColor.textSecondary]);
+      homeNormal.fontColor([this.tabInactiveColor()]);
       const homeSelected = new SymbolGlyphModifier($r('sys.symbol.house_fill'));
-      homeSelected.fontColor([HwColor.primary]);
+      homeSelected.fontColor([this.accent()]);
       return new BottomTabBarStyle({ normal: homeNormal, selected: homeSelected }, '首页');
     }
     if (index === 1) {
       const msgNormal = new SymbolGlyphModifier($r('sys.symbol.envelope'));
-      msgNormal.fontColor([HwColor.textSecondary]);
+      msgNormal.fontColor([this.tabInactiveColor()]);
       const msgSelected = new SymbolGlyphModifier($r('sys.symbol.envelope_fill'));
-      msgSelected.fontColor([HwColor.primary]);
+      msgSelected.fontColor([this.accent()]);
       return new BottomTabBarStyle({ normal: msgNormal, selected: msgSelected }, '消息');
     }
     if (index === 2 && !this.isWearable) {
       const infoNormal = new SymbolGlyphModifier($r('sys.symbol.info_circle'));
-      infoNormal.fontColor([HwColor.textSecondary]);
+      infoNormal.fontColor([this.tabInactiveColor()]);
       const infoSelected = new SymbolGlyphModifier($r('sys.symbol.info_circle_fill'));
-      infoSelected.fontColor([HwColor.primary]);
+      infoSelected.fontColor([this.accent()]);
       return new BottomTabBarStyle({ normal: infoNormal, selected: infoSelected }, '信息');
     }
     const mineNormal = new SymbolGlyphModifier($r('sys.symbol.person'));
-    mineNormal.fontColor([HwColor.textSecondary]);
+    mineNormal.fontColor([this.tabInactiveColor()]);
     const mineSelected = new SymbolGlyphModifier($r('sys.symbol.person_fill'));
-    mineSelected.fontColor([HwColor.primary]);
+    mineSelected.fontColor([this.accent()]);
     return new BottomTabBarStyle({ normal: mineNormal, selected: mineSelected }, '我的');
   }
 

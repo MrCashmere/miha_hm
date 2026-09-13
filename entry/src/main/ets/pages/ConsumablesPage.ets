@@ -20,7 +20,7 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { HwColor, HwRadius, HwSpace, MijiaOverviewCard, MijiaOverviewCardText, MijiaOverviewCardValue, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { MaterialCard , AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -159,7 +159,7 @@ struct ConsumablesPage {
           .fontFamily(this.appFontFamily(detail.name))
           .fontWeight(this.appFontWeight())
           .fontSize(14)
-          .fontColor(Color.White)
+          .fontColor(HwColor.textPrimary)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -168,7 +168,7 @@ struct ConsumablesPage {
             .fontFamily(this.appFontFamily(detail.remainText))
             .fontWeight(this.appFontWeight())
             .fontSize(12)
-            .fontColor(MijiaOverviewCardText)
+            .fontColor(HwColor.textSecondary)
             .maxLines(1)
         }
         if (detail.percent >= 0) {
@@ -189,7 +189,7 @@ struct ConsumablesPage {
           .width('100%')
           .height(8)
           .color(this.detailColor(detail.percent))
-          .backgroundColor('#24FFFFFF')
+          .backgroundColor('#14000000')
           .borderRadius(4)
       }
     }
@@ -206,13 +206,13 @@ struct ConsumablesPage {
       Row({ space: 10 }) {
         SymbolGlyph($r('sys.symbol.leaf'))
           .fontSize(18)
-          .fontColor([Color.White])
+          .fontColor([HwColor.textPrimary])
         Text(item.name.length > 0 ? item.name : item.model)
           .fontFamily(this.appFontFamily(item.name.length > 0 ? item.name : item.model))
           .fontWeight(this.appFontWeight())
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
+          .fontColor(HwColor.textPrimary)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -220,13 +220,13 @@ struct ConsumablesPage {
           .fontFamily(this.appFontFamily(`${item.details.length} 项耗材`))
           .fontWeight(this.appFontWeight())
           .fontSize(12)
-          .fontColor(MijiaOverviewCardText)
+          .fontColor(HwColor.textSecondary)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
       Divider()
-        .color('#24FFFFFF')
+        .color('#14000000')
 
       ForEach(item.details, (detail: MijiaConsumableDetail) => {
         this.consumableDetailRow(detail)
