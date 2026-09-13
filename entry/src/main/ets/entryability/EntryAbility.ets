@@ -302,7 +302,11 @@ export default class EntryAbility extends UIAbility {
     // 未显式设置过深色模式时跟随系统，设置过则维持用户选择。
     // 本回调会被 setColorMode 同步触发，存储未就绪时按默认值处理，避免进程崩溃。
     const darkModeEnabled = EntryAbility.resolveDarkMode(this.context);
-    applyAppTheme(darkModeEnabled);
+    // 同样要把已保存的主题色传入，否则系统深浅色变化会把背景染色重置掉
+    const accentColor = resolveAccentColor(
+      AppSettingsStore.getString('accentKey', 'harmony'),
+      AppSettingsStore.getString('accentCustom', ''));
+    applyAppTheme(darkModeEnabled, accentColor);
     AppStorage.setOrCreate('isDarkMode', darkModeEnabled);
   }
 

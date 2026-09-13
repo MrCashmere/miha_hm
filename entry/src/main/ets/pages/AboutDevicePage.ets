@@ -21,7 +21,7 @@
 
 import { HdsNavDestination } from '@kit.UIDesignKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { AccentColorSentinel, MaterialCard } from '../components/MaterialCard';
 import { AppBackground } from '../components/AppBackground';
 import { IconCircleButton } from '../components/IconCircleButton';
@@ -204,7 +204,7 @@ export struct AboutDevicePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .hideTitleBar(true)
     .hideBackButton(true)
     .hideToolBar(true, true)

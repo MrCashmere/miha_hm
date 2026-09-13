@@ -163,9 +163,14 @@ export struct MaterialCard {
   emptyContent() {
   }
 
+  /** 沉浸光感是否生效：API 26 以上 + 应用开关打开 + 本卡允许承载 */
+  private materialActive(): boolean {
+    return this.cardMaterialEnabled && this.immersiveLightEnabled && isApi26OrAbove();
+  }
+
   @Builder
   cardBody() {
-    if (this.cardMaterialEnabled && this.immersiveLightEnabled && isApi26OrAbove()) {
+    if (this.materialActive()) {
       MaterialCardLayer({ layerRadius: this.cardRadius })
     }
     Flex({
@@ -187,10 +192,23 @@ export struct MaterialCard {
    * 让出后由承载层自己负责底色 + 材质。
    */
   private shellBackground(): ResourceColor {
-    if (this.cardMaterialEnabled && this.immersiveLightEnabled && isApi26OrAbove()) {
+    if (this.materialActive()) {
+      // 材质生效时必须让出底色，否则底色会垫在材质之下叠出灰感
       return Color.Transparent;
     }
     return this.cardOpaqueBackground ? this.cardBackground : Color.Transparent;
+  }
+
+  /**
+   * 不承载沉浸光感时的降级：毛玻璃。
+   *
+   * 之前降级路径只是把不透明底色画上去，卡片变成一块死板色块；
+   * 这里补上 `backgroundBlurStyle`，配合 HwGlassCardColor.surface 的 70% 透明度
+   * （见 DesignTokens.applyAppTheme），得到与沉浸光感同一观感的磨砂玻璃。
+   * 材质生效时用 BlurStyle.NONE 关掉，避免与材质叠加。
+   */
+  private shellBlurStyle(): BlurStyle {
+    return this.materialActive() ? BlurStyle.NONE : BlurStyle.Thin;
   }
 
   build() {
@@ -203,6 +221,7 @@ export struct MaterialCard {
       .margin(this.cardMargin)
       .borderRadius(this.cardRadius)
       .backgroundColor(this.shellBackground())
+      .backgroundBlurStyle(this.shellBlurStyle())
       .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
       .clip(true)
       .hoverEffect(this.cardHoverEffect)
@@ -227,6 +246,7 @@ export struct MaterialCard {
       .margin(this.cardMargin)
       .borderRadius(this.cardRadius)
       .backgroundColor(this.shellBackground())
+      .backgroundBlurStyle(this.shellBlurStyle())
       .border({ width: this.cardBorderWidth, color: this.cardBorderColor })
       .clip(true)
       .hoverEffect(this.cardHoverEffect)

@@ -82,6 +82,62 @@ export function withAlpha(color: string, alpha: number): string {
 }
 
 /**
+ * 页面底色。**所有页面统一走这个函数，不要直接读 `HwColor.background`。**
+ *
+ * 为什么要绕一层函数：ArkUI 的局部更新按**表达式**记录依赖，而 `HwColor` 是模块级对象
+ * ——读它的属性不会被登记。直接写 `this.isDarkMode ? HwColor.backgroundDark : HwColor.background`
+ * 只登记了 `isDarkMode`，于是切换主题色时底色不会重新求值，已打开的页面会停在旧色上。
+ * 把 `accentColor` 作为入参传进来，调用点就真正读到了这个订阅键，依赖才登记得上。
+ *
+ * 两个参数都必须是调用方声明的订阅变量（`@StorageProp` / `@StorageLink`），
+ * 传字面量或普通字段没有意义。
+ */
+export function resolvePageBackground(accentColor: string, isDark: boolean): string {
+  return isDark ? HwColor.backgroundDark : HwColor.background;
+}
+
+/**
+ * 两个 `#RRGGBB` 线性混合：ratio=0 取 base，ratio=1 取 tint。
+ * 用于把主题色调成「很淡的底色」——直接铺主题色会盖过正文。
+ * 任一输入非法时原样返回 base，绝不返回半成品颜色。
+ */
+export function mixHex(base: string, tint: string, ratio: number): string {
+  const a = normalizeAccentHex(base);
+  const b = normalizeAccentHex(tint);
+  if (a.length === 0 || b.length === 0) {
+    return a.length > 0 ? a : base;
+  }
+  const clamped = Math.max(0, Math.min(1, ratio));
+  let out = '#';
+  for (let i = 1; i < 7; i += 2) {
+    const ca = parseInt(a.substring(i, i + 2), 16);
+    const cb = parseInt(b.substring(i, i + 2), 16);
+    const mixed = Math.round(ca + (cb - ca) * clamped);
+    out += mixed.toString(16).toUpperCase().padStart(2, '0');
+  }
+  return out;
+}
+
+/**
+ * 是否是内置预设主题色。
+ *
+ * 页面背景只跟随预设色：自定义色是用户随手输的，
+ * 拿它铺满整页底色很容易脏，也可能与正文对比度不足。
+ */
+export function isPresetAccent(color: string): boolean {
+  const normalized = normalizeAccentHex(color);
+  if (normalized.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < ACCENT_PRESETS.length; i++) {
+    if (normalizeAccentHex(ACCENT_PRESETS[i].value) === normalized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 校验自定义主题色输入：只接受 6 位十六进制（可带 #），大小写均可。
  * 返回规范化后的 `#RRGGBB`，非法时返回空串。
  */
@@ -183,12 +239,22 @@ export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   if (accentColor.length > 0) {
     HwColor.primary = accentColor;
   }
-  HwColor.background = isDark ? '#1A2D44' : '#DCEAF8';
+  // 默认背景跟随预设主题色，且刻意压得很淡：
+  // 浅色 = 主题色与白色按 12% 混合，深色 = 与深底按 18% 混合。
+  // 页面用的是 `isDarkMode ? backgroundDark : background`，所以两个都要跟着染。
+  const backgroundBaseDark = '#1A2D44';
+  const followed = accentColor.length > 0 && isPresetAccent(accentColor);
+  const tintedLight = followed ? mixHex('#FFFFFF', accentColor, 0.12) : '#DCEAF8';
+  const tintedDark = followed ? mixHex(backgroundBaseDark, accentColor, 0.18) : backgroundBaseDark;
+  HwColor.background = isDark ? tintedDark : tintedLight;
+  HwColor.backgroundDark = tintedDark;
   HwColor.surface = isDark ? '#22334F' : '#FFFFFF';
   HwColor.textPrimary = isDark ? '#EDF1F7' : '#1A1A1A';
   HwColor.textSecondary = isDark ? '#9BA8BC' : '#7A8089';
   MijiaSheetBackground = isDark ? '#2A3B58' : '#E3EAF4';
-  HwGlassCardColor.surface = isDark ? '#26364F' : '#E8F0F8';
+  // 卡片底色留 70% 透明度：沉浸光感不可用时会降级为毛玻璃（backgroundBlurStyle），
+  // 不透明的底色会把模糊整个盖住，等于没有降级效果。
+  HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';
   // 卡片描边也跟着主题色走：写死 '#1A3379B7'（旧米家蓝 10% 透明）在切色后会露出蓝边，
   // 而卡片描边本来就该是同色系的淡描边。
   HwGlassCardColor.border = withAlpha(HwColor.primary, 0.1);

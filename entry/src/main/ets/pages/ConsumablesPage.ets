@@ -20,7 +20,7 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace, MijiaOverviewCard, MijiaOverviewCardText, MijiaOverviewCardValue } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, MijiaOverviewCard, MijiaOverviewCardText, MijiaOverviewCardValue, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { MaterialCard , AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -349,7 +349,7 @@ struct ConsumablesPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

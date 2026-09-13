@@ -26,7 +26,7 @@ import {
 import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { Logger } from '../utils/Logger';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { AccentColorSentinel } from '../components/MaterialCard';
 import { PressableButton } from '../components/PressableButton';
 import { AppBackground } from '../components/AppBackground';
@@ -204,7 +204,7 @@ struct LoginPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

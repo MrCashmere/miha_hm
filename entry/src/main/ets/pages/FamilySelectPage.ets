@@ -22,7 +22,7 @@
 import { router } from '@kit.ArkUI';
 import { XiaomiHome, ALL_HOMES_ID, ALL_HOMES_NAME } from '../models/XiaomiHomeModels';
 import { xiaomiDataService } from '../services/XiaomiDataService';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -250,7 +250,7 @@ struct FamilySelectPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

@@ -23,7 +23,7 @@ import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { sheetBlurStyle } from '../utils/SystemMaterial';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
@@ -431,7 +431,7 @@ struct FontManagePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet($$this.showRenameSheet, this.renameSheet(), {
       height: SheetSize.MEDIUM,

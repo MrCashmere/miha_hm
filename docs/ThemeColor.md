@@ -78,6 +78,12 @@ export function normalizeAccentList(raw: string[]): string[] { /* ... */ }
  */
 export function withAlpha(color: string, alpha: number): string { /* ... */ }
 
+/** 两个颜色线性混合：ratio=0 取 base，ratio=1 取 tint。用于把主题色调成很淡的底色 */
+export function mixHex(base: string, tint: string, ratio: number): string { /* ... */ }
+
+/** 是否是内置预设主题色。页面背景只跟随预设，自定义色不参与（见 §3.3） */
+export function isPresetAccent(color: string): boolean { /* ... */ }
+
 /** 按设置解析出最终颜色；预设未命中时用自定义值，非法则回落鸿蒙蓝 */
 export function resolveAccentColor(accentKey: string, customHex: string): string {
   for (let i = 0; i < ACCENT_PRESETS.length; i++) {
@@ -109,11 +115,25 @@ export function applyAppTheme(isDark: boolean, accentColor: string = ''): void {
   if (accentColor.length > 0) {
     HwColor.primary = accentColor;
   }
-  HwColor.background    = isDark ? '#1A2D44' : '#DCEAF8';
+  // 默认背景跟随**预设**主题色，且刻意压得很淡：
+  // 浅色 = 主题色与白色按 12% 混合，深色 = 与深底按 18% 混合。
+  // 页面用的是 `isDarkMode ? backgroundDark : background`，所以两个都要跟着染。
+  const backgroundBaseDark = '#1A2D44';
+  const followed = accentColor.length > 0 && isPresetAccent(accentColor);
+  const tintedLight = followed ? mixHex('#FFFFFF', accentColor, 0.12) : '#DCEAF8';
+  const tintedDark = followed ? mixHex(backgroundBaseDark, accentColor, 0.18) : backgroundBaseDark;
+  HwColor.background = isDark ? tintedDark : tintedLight;
+  HwColor.backgroundDark = tintedDark;
+
   HwColor.surface       = isDark ? '#22334F' : '#FFFFFF';
   HwColor.textPrimary   = isDark ? '#EDF1F7' : '#1A1A1A';
   HwColor.textSecondary = isDark ? '#9BA8BC' : '#7A8089';
-  // ...其余随暗色模式联动的 token
+
+  // 卡片底色留 70% 透明度：沉浸光感不可用时要降级为毛玻璃，
+  // 不透明底色会把模糊整个盖住，等于没有降级效果（见 §7.5）。
+  HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';
+  // 卡片描边跟主题色走，不要写死旧米家蓝
+  HwGlassCardColor.border = withAlpha(HwColor.primary, 0.1);
 }
 
 /** 从持久化设置重建主题并广播 */
@@ -393,6 +413,23 @@ ForEach(this.filteredDevices, (device: XiaomiDevice) => {
 当前 5 处已带：设备列表、房间筛选 chip、排序 chip、收藏设备列表、排除设备列表。
 新增列表时请照做。
 
+**同一个坑还有第二种表现：选中态本身就是状态。**
+主题色选择器里的色块就是例子——色块内容没变，但「哪个带对号」变了：
+
+```ts
+// ✗ 对号永远停在上一个被点的色块上
+ForEach(ACCENT_PRESETS, (preset: AccentPreset) => {
+  this.accentSwatch(preset.key, preset.value, preset.label, this.accentKey === preset.key, false)
+}, (preset: AccentPreset) => `preset_${preset.key}`)
+
+// ✓ 把选中态编进 key，被选中/被取消的两项都会重建
+}, (preset: AccentPreset) =>
+`preset_${preset.key}_${this.accentKey === preset.key ? 1 : 0}`)
+```
+
+判断方法很简单：**问自己「这个列表项的外观会不会在数据不变的情况下改变」**。
+只要会（选中、展开、加载中、禁用），key 就必须把它编进去。
+
 ### 5.6 选中态芯片（分段控件）的标准写法
 
 首页的房间筛选、排序方式，智能页的分类切换，都长这样——
@@ -435,6 +472,38 @@ categoryChip(key: string, label: string) {
   百分比在 `Stack` 内会按父级满宽解析，把芯片撑成一整行；`matchParent` 按父级实测尺寸解析，随内容走。
 - **外层包一层 `Column` + `constraintSize({ minWidth: 64 })`**（内容宽度会变的芯片）：
   既不会塌成 0（那样材质画不出来、点击也收不到），也不会撑满整行。
+
+### 5.7 默认背景色（页面底色）
+
+页面底色也跟随主题色，但有两条**刻意加的限制**，不要顺手去掉：
+
+| 限制 | 原因 |
+| --- | --- |
+| **只跟随预设色** | 自定义色是用户随手输的，拿它铺满整页很容易脏，也可能与正文对比度不足 |
+| **混得非常淡** | 浅色只混 12%、深色只混 18%；直接铺主题色会压过正文，页面看着像报错页 |
+
+```ts
+const followed = accentColor.length > 0 && isPresetAccent(accentColor);
+const tintedLight = followed ? mixHex('#FFFFFF', accentColor, 0.12) : '#DCEAF8';
+const tintedDark = followed ? mixHex('#1A2D44', accentColor, 0.18) : '#1A2D44';
+HwColor.background = isDark ? tintedDark : tintedLight;
+HwColor.backgroundDark = tintedDark;   // ← 别漏：页面读的是 isDarkMode ? backgroundDark : background
+```
+
+实际效果（浅色模式）：鸿蒙蓝 `#0A59F7` → `#E2EBFE`；昔涟粉 `#E86A92` → `#FCEDF2`。
+
+页面侧**必须通过 `resolvePageBackground()` 取这个值**，不能直接读 `HwColor.background`：
+
+```ts
+.backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+```
+
+原因见 §7.8 —— 直接读 `HwColor.background` 不会被 ArkUI 登记为依赖，
+切主题色时已打开的页面不会重算底色。两个入参必须是页面自己声明的订阅变量。
+
+**`background` 和 `backgroundDark` 必须同时染。** 页面里的写法是
+`this.isDarkMode ? HwColor.backgroundDark : HwColor.background`，
+只改前者的话暗色模式下背景纹丝不动。
 
 ---
 
@@ -526,6 +595,30 @@ MaterialCard({ cardMargin: { top: 8 } }) { ... }   // ✓ 用 card* 参数
 `bindSheet({ backgroundColor: Color.Transparent })`（默认值是 `Color.White`）。
 细节见 README 的「沉浸光感（API 26）」章节。
 
+**同一条规则也决定了降级路径必须补毛玻璃。**
+沉浸光感不可用时（API < 26、开关关闭），只把不透明底色画上去，卡片会变成一块死板色块。
+正确的降级是三件事一起做：
+
+```ts
+// 1) 外壳底色在半透明与透明之间切换（材质生效时让位，不生效时作为玻璃底色）
+private shellBackground(): ResourceColor {
+  return this.materialActive() ? Color.Transparent : this.cardBackground;
+}
+
+// 2) 不生效时补一层模糊；生效时用 NONE 关掉，避免与材质叠加
+private shellBlurStyle(): BlurStyle {
+  return this.materialActive() ? BlurStyle.NONE : BlurStyle.Thin;
+}
+```
+
+```ts
+// 3) 底色本身必须带透明度，否则模糊被完全盖住 —— 这一步最容易漏
+HwGlassCardColor.surface = isDark ? '#B326364F' : '#B3E8F0F8';   // 约 70% 不透明
+```
+
+**三条缺一不可**：只加 `backgroundBlurStyle` 而底色不透明，模糊根本看不见；
+只调透明而不加模糊，卡片变成一层薄纱但背后什么都没有。
+
 ### 7.6 `@StorageProp` 只能读，要写回必须用 `@StorageLink`
 
 两者都订阅同一个 `AppStorage` 键，但方向不同：
@@ -540,6 +633,59 @@ MaterialCard({ cardMargin: { top: 8 } }) { ... }   // ✓ 用 card* 参数
 
 一个页面把 `@StorageLink('isDarkMode')` 改了，其余 14 个用 `@StorageProp('isDarkMode')`
 订阅同一键的页面会一起重建 —— 读用 Prop、写用 Link，是这套机制最常见的组合。
+
+---
+
+### 7.7 调 `applyAppTheme()` 一定要带上当前主题色
+
+`applyAppTheme(isDark, accentColor = '')` 的第二个参数一旦省略，背景染色就会被重置回默认值
+——因为它内部要靠 `accentColor` 判断「要不要跟随主题色」。
+
+```ts
+applyAppTheme(enabled);                      // ✗ 背景染色被重置
+applyAppTheme(enabled, this.currentAccent()); // ✓
+```
+
+容易漏的两处（都已修）：
+- **切换深色模式**时只想着 `isDark` 变了，忘了主题色没变但必须一起传；
+- **`onConfigurationUpdate`**（系统深浅色变化）里同样要重新读一次已保存的主题色再传进去。
+
+排查方式：切一下深色模式开关，如果页面背景从「主题色淡染」变回固定浅蓝，就是这里漏了。
+
+### 7.8 读 `HwColor` 的属性不会建立依赖 —— 页面底色必须走 `resolvePageBackground()`
+
+ArkUI 的局部更新是**按表达式**记录依赖的，而 `HwColor` 只是个模块级普通对象：
+读它的属性**不会被登记**，属性变了也不会让任何表达式重新求值。
+
+所以下面这种写法是坏的：
+
+```ts
+// ✗ 只登记了 isDarkMode；切主题色时这个表达式不会被重新求值
+.backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+```
+
+表现就是**已打开的页面底色不跟着切**，而新建/重进的页面又是对的——很容易误判成"刷新不及时"。
+
+正确写法是让 `accentColor` 出现在表达式里（§5.7）：
+
+```ts
+.backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
+```
+
+`resolvePageBackground(accentColor, isDark)` 内部返回的仍是 `HwColor` 的对应属性，
+但它把 `accentColor` 变成了**入参**——调用点在 build 期间真正读了这个订阅键，依赖才登记得上。
+
+**这条规则对 `HwColor` 的每个属性都成立**，不只是背景色：
+
+| 场景 | 正确做法 |
+| --- | --- |
+| 取主题色 | `this.accentOrPrimary()` / `this.accent()`（内部读 `accentColor`） |
+| 页面底色 | `resolvePageBackground(this.accentColor, this.isDarkMode)` |
+| 直接写 `HwColor.primary` | 只在**不依赖主题色变化**的地方可接受（如按压态等瞬时样式，每次应用时重新读取） |
+
+顺带一提，历史上有 `MaterialCard` 挂一个零尺寸的 `AccentColorSentinel` 来"提供依赖"的做法。
+它能让**卡片内部**的表达式重算，但**不会**让页面根节点的属性重新求值——
+页面自己的底色还是得走 `resolvePageBackground()`。
 
 ---
 

@@ -11,7 +11,7 @@
 
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
@@ -43,6 +43,8 @@ struct SceneCreatePage {
   @StorageLink('fontWeightMode') fontWeightMode: string = 'system';
   @StorageLink('fontWeightValue') fontWeightValue: number = 400;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 深浅色。原先底色写死 HwColor.background，改用 resolvePageBackground 后必须订阅该键 */
+  @StorageProp('isDarkMode') isDarkMode: boolean = false;
   @StorageProp('navigationBarHeight') navigationBarHeight: number = 0;
   @StorageLink('selectedHomeId') selectedHomeId: string = '';
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
@@ -965,7 +967,7 @@ struct SceneCreatePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

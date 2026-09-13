@@ -37,7 +37,7 @@ import { Logger } from '../utils/Logger';
 import { deviceSymbolFor, isLightDeviceText } from '../utils/DeviceSymbol';
 import { DataSourceState } from '../models/CacheState';
 import { XiaomiAuthError } from '../models/XiaomiErrors';
-import { reloadAppTheme, HwColor, HwGlassCardColor, HwRadius, HwSpace, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { applyMaterialCarrier, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
 import { isCelsiusUnit, celsiusToFahrenheit } from '../utils/TemperatureDisplay';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
@@ -3819,7 +3819,7 @@ struct HomePage {
               .layoutWeight(1)
               .height(46)
               .fontSize(15)
-              .backgroundColor(HwColor.background)
+              .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
               .fontColor(HwColor.textPrimary)
               .onClick(() => {
                 this.resetDeviceRename();
@@ -4600,7 +4600,7 @@ struct HomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .mode(this.isLargeScreen && !this.pcLayoutEnabled && this.autoMultiColumn ? NavigationMode.Auto : NavigationMode.Stack)
     .titleBar({
       avoidLayoutSafeArea: true,

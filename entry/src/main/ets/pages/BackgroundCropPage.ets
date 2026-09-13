@@ -23,7 +23,7 @@ import { router, display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
-import { reloadAppTheme, HwColor } from '../utils/DesignTokens';
+import { HwColor, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { FeedbackLogService } from '../services/FeedbackLogService';
@@ -74,6 +74,8 @@ struct BackgroundCropPage {
     return this.fontWeightMode === 'custom' ? this.fontWeightValue : 400;
   }
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  /** 深浅色。原先底色写死 HwColor.background，改用 resolvePageBackground 后必须订阅该键 */
+  @StorageProp('isDarkMode') isDarkMode: boolean = false;
   /**
    * 窗口尺寸（vp），由 EntryAbility 从 windowRect 写入并随 windowSizeChange 更新。
    *
@@ -524,7 +526,7 @@ struct BackgroundCropPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

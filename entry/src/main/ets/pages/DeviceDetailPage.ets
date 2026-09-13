@@ -45,7 +45,7 @@ import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { Logger } from '../utils/Logger';
-import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, withAlpha } from '../utils/DesignTokens';
+import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { celsiusToFahrenheit, isCelsiusUnit } from '../utils/TemperatureDisplay';
 import { AccentColorSentinel, MaterialCard } from '../components/MaterialCard';
 import { AppBackground } from '../components/AppBackground';
@@ -1909,7 +1909,7 @@ export struct DeviceDetailPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .clip(this.isWearable)
     .borderRadius(this.isWearable ? '50%' : 0)
     .hideTitleBar(true)

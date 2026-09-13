@@ -24,8 +24,7 @@ import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { text } from '@kit.ArkGraphics2D';
-import { ACCENT_PRESETS, ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, AccentPreset, HwColor, HwRadius, HwSpace, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor,
-  applyAppTheme } from '../utils/DesignTokens';
+import { ACCENT_CUSTOM_LIST_STORAGE, ACCENT_CUSTOM_STORAGE, ACCENT_KEY_STORAGE, ACCENT_PRESETS, AccentPreset, HwColor, HwRadius, HwSpace, applyAppTheme, normalizeAccentHex, normalizeAccentList, reloadAppTheme, resolveAccentColor, resolvePageBackground } from '../utils/DesignTokens';
 import { isApi26OrAbove, materialDiagnostics, sheetBlurStyle } from '../utils/SystemMaterial';
 import { loadCustomFonts } from '../utils/CustomFonts';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
@@ -443,7 +442,8 @@ struct AppearanceSettingsPage {
     // 写入这个键之后，启动逻辑就会以应用内开关为准，不再跟随系统
     AppSettingsStore.setBoolean('darkModeEnabled', enabled);
     // HwColor 是模块级对象，改属性不会触发任何刷新，所以改完必须广播订阅键。
-    applyAppTheme(enabled);
+    // 必须把当前主题色一并传入：背景色是按主题色染的，只传 isDark 会把染色重置回默认。
+    applyAppTheme(enabled, this.currentAccent());
     // isDarkMode 是 @StorageLink，赋值会同步写回 AppStorage，
     // 其余 14 个订阅该键的页面随即重建、取到新的 HwColor 值。
     this.isDarkMode = enabled;
@@ -881,13 +881,17 @@ struct AppearanceSettingsPage {
               // 色块统一走 MaterialCard：和首页卡片同一套沉浸光感载体，
               // 换行排列——预设在前，用户新增的自定义色在后，末尾固定是「新增」按钮。
               Flex({ wrap: FlexWrap.Wrap }) {
+                // key 必须带上选中态：ForEach 复用同 key 的项，
+                // 键不变就不会重建子节点，对号会一直停在上一个色块上。
                 ForEach(ACCENT_PRESETS, (preset: AccentPreset) => {
-                  this.accentSwatch(preset.key, preset.value, preset.label, this.accentKey === preset.key, false)
-                }, (preset: AccentPreset) => `preset_${preset.key}`)
+                  this.accentSwatch(preset.key, preset.value, preset.label,
+                    this.accentKey === preset.key, false)
+                }, (preset: AccentPreset) =>
+                `preset_${preset.key}_${this.accentKey === preset.key ? 1 : 0}`)
 
                 ForEach(this.accentList, (hex: string) => {
                   this.accentSwatch(hex, `#${hex}`, hex, this.isCustomSelected(hex), true)
-                }, (hex: string) => `custom_${hex}`)
+                }, (hex: string) => `custom_${hex}_${this.isCustomSelected(hex) ? 1 : 0}`)
 
                 this.addAccentSwatch()
               }
@@ -1257,7 +1261,7 @@ struct AppearanceSettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();

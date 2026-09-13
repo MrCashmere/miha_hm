@@ -20,7 +20,7 @@
  */
 
 import { router } from '@kit.ArkUI';
-import { reloadAppTheme, HwColor, HwRadius, HwSpace } from '../utils/DesignTokens';
+import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
 // 卡片已全部改为 MaterialCard 承载光感，旧的修饰器不再需要；
 // sheet 仍走同一套系统材质，所以保留这两个。
 import { sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
@@ -1021,7 +1021,7 @@ struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.isDarkMode ? HwColor.backgroundDark : HwColor.background)
+    .backgroundColor(resolvePageBackground(this.accentColor, this.isDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .keyboardShortcut(FunctionKey.ESC, [], () => {
       router.back();
