@@ -1113,7 +1113,7 @@ struct AppearanceSettingsPage {
                     .fontWeight(this.appFontWeight())
                     .fontSize(15)
                     .fontColor(HwColor.textPrimary)
-                  Text('开启后按压卡片会多一层跟手的触碰反馈光；关闭只有映照到卡间缝隙的环境光。不影响底部标签栏')
+                  Text('开启后按压卡片才出现流光；关闭则按压卡片不出现任何光。不影响底部标签栏')
                     .fontFamily(this.appFontFamily('开启后按压卡片会多一层跟手的触碰反馈光；关闭只有映照到卡间缝隙的环境光。不影响底部标签栏'))
                     .fontWeight(this.appFontWeight())
                     .fontSize(12)

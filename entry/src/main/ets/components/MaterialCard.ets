@@ -292,16 +292,18 @@ export struct MaterialCard {
   }
 
   /**
-   * 是否画「溢出到卡间缝隙的环境光」。
+   * 「卡片流光触感」关闭时，按压卡片**一点光都不出现**——跟手光斑和溢出到
+   * 卡间缝隙的环境光都不画。
    *
-   * 这一层**不受「卡片流光触感」影响**：那个开关管的是手指底下有没有跟手光斑，
-   * 环境光始终保留——「关闭后只映照流光」说的就是它。
+   * 这条是踩出来的：第一版只关掉跟手光斑、留着环境光，但环境光的圆心
+   * 本来就跟着手指走，看起来仍是「触碰反馈的流光」，等于开关没生效。
+   * 两层要么一起亮，要么一起不亮。
    */
   private spillVisible(): boolean {
-    return this.glowVisible();
+    return this.glowVisible() && this.glowTouchEnabled;
   }
 
-  /** 是否画手指底下的跟手光斑：要额外打开「卡片流光触感」 */
+  /** 是否画手指底下的跟手光斑：同样要求「卡片流光触感」打开 */
   private touchGlowVisible(): boolean {
     return this.glowVisible() && this.glowTouchEnabled;
   }
