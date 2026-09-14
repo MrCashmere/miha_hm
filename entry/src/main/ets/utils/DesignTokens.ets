@@ -436,6 +436,16 @@ export const HwSpace: HwSpaceScale = {
   xl: 24
 };
 
+/**
+ * 双列布局里单张卡片的宽度占比。
+ *
+ * 48.5% × 2 = 97%，剩下 3% 就是两列之间的缝隙：两端对齐交给容器的
+ * `justifyContent(FlexAlign.SpaceBetween)`，卡片自己不带左右外边距，
+ * 卡片外缘才能与整行内容齐平。首页设备卡与设备详情页控制卡共用这一个值，
+ * 保证全应用的双列节奏一致（PropertyControl 里的枚举选项也用同一档）。
+ */
+export const DUAL_COLUMN_CARD_WIDTH: string = '48.5%';
+
 export interface HwGlassCardPalette {
   surface: string;
   border: string;

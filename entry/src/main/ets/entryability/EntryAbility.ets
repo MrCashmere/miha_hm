@@ -72,6 +72,13 @@ export default class EntryAbility extends UIAbility {
     if (!AppSettingsStore.has('dualColumnMode')) {
       AppSettingsStore.setBoolean('dualColumnMode', dualColumnMode);
     }
+    /**
+     * 设备页双列：与首页的「双列模式」彼此独立。
+     *
+     * 默认关闭，且**不跟随屏幕尺寸**：设备页的卡片本来就窄，压到半宽后
+     * 标签与数值频繁截断，只作为尝鲜开关留给用户自己开（设置页标注「不实用」）。
+     */
+    const devicePageDualColumn = AppSettingsStore.getBoolean('devicePageDualColumn', false);
     if (!AppSettingsStore.has('autoMultiColumn')) {
       AppSettingsStore.setBoolean('autoMultiColumn', autoMultiColumn);
     }
@@ -95,6 +102,14 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('defaultHomeTab', defaultHomeTab);
     AppStorage.setOrCreate('infoRefreshInterval', infoRefreshInterval);
     AppStorage.setOrCreate('dualColumnMode', dualColumnMode);
+    AppStorage.setOrCreate('devicePageDualColumn', devicePageDualColumn);
+    /**
+     * 游客态：登录页「跳过登录」后置 true，本次会话内首页按「未登录」渲染。
+     *
+     * 刻意**不落盘**：每次冷启动仍然先看有没有账号，没有就回登录页，
+     * 免得「跳过登录」被永久记住后用户再也见不到登录入口。
+     */
+    AppStorage.setOrCreate('guestMode', false);
     AppStorage.setOrCreate('autoMultiColumn', autoMultiColumn);
     AppStorage.setOrCreate('pcLayoutEnabled', pcLayoutEnabled);
     AppStorage.setOrCreate('temperatureFahrenheit', temperatureFahrenheit);

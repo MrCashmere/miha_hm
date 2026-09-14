@@ -45,7 +45,7 @@ import { xiaomiDataService } from '../services/XiaomiDataService';
 import { FeedbackLogService } from '../services/FeedbackLogService';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
 import { Logger } from '../utils/Logger';
-import { HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
+import { DUAL_COLUMN_CARD_WIDTH, HwColor, HwGlassCardColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { celsiusToFahrenheit, isCelsiusUnit } from '../utils/TemperatureDisplay';
 import { AccentColorSentinel, MaterialCard } from '../components/MaterialCard';
 import { AppBackground } from '../components/AppBackground';
@@ -96,6 +96,11 @@ export function DeviceDetailBuilder(name: string, param: Object) {
 @Component
 export struct DeviceDetailPage {
   @StorageLink('cardsFromTop') cardsFromTop: boolean = true;
+  /**
+   * 设备页双列（设置页开关，默认关闭、标注「不实用」）：开启后分区里的控制卡按半宽双列排布，
+   * 见 controlTileGrid。与首页的「双列模式」是两份独立设置，互不连带。
+   */
+  @StorageLink('devicePageDualColumn') devicePageDualColumn: boolean = false;
   /** 主题色变化时触发重建，让 HwColor.primary 的新值生效 */
   @StorageProp('accentColor') @Watch('onAccentColorChanged') accentColor: string = '';
   @StorageLink('fontMode') fontMode: string = 'system';
@@ -1182,7 +1187,7 @@ export struct DeviceDetailPage {
     return result;
   }
 
-  // 其余开关/滑块/数值：两列网格卡片
+  // 其余开关/滑块/数值/文本：整行卡；「设备页双列」开启时由 controlTileGrid 排成两列
   private sectionTiles(section: ServiceSection): PropertyControlDescriptor[] {
     const result: PropertyControlDescriptor[] = [];
     for (let i = 0; i < section.controls.length; i++) {
@@ -1198,7 +1203,6 @@ export struct DeviceDetailPage {
     return result;
   }
 
-  // 网格按行切片：一行两个，单数行留等宽占位，保证卡片宽度一致
   /** 概览关键读数：明面控件里已取到值的只读读数，最多三项 */
   private keyReadouts(): PropertyControlDescriptor[] {
     const result: PropertyControlDescriptor[] = [];
@@ -1548,21 +1552,62 @@ export struct DeviceDetailPage {
           })
         }, (control: PropertyControlDescriptor) => `select_${control.siid}_${control.piid}`)
 
-        // 属性卡固定单列：双列会把卡片压到半宽，标签与数值频繁截断
-        ForEach(this.sectionTiles(section), (control: PropertyControlDescriptor) => {
-          PropertyControl({
-            control: control,
-            value: this.getValue(control),
-            compact: false,
-            onChanged: (value: Object) => {
-              this.setValue(control, value);
-            }
-          })
-        }, (control: PropertyControlDescriptor) => `tile_${control.siid}_${control.piid}`)
+        // 控制卡：默认整行；「设备页双列」开启后改半宽双列紧凑卡（见 controlTileGrid）
+        if (this.devicePageDualColumn) {
+          this.controlTileGrid(this.sectionTiles(section))
+        } else {
+          ForEach(this.sectionTiles(section), (control: PropertyControlDescriptor) => {
+            PropertyControl({
+              control: control,
+              value: this.getValue(control),
+              compact: false,
+              onChanged: (value: Object) => {
+                this.setValue(control, value);
+              }
+            })
+          }, (control: PropertyControlDescriptor) => `tile_${control.siid}_${control.piid}`)
+        }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
     }
+  }
+
+  /**
+   * 控制卡双列网格（设置 → 设备页双列，默认关闭）。
+   *
+   * 只收分区里的「小区块」控制卡：开关 / 滑块 / 数值 / 文本输入。三种卡刻意不进网格：
+   *   - 顶部带设备名的概览卡：它是这一页的抬头，半宽会把名称与在线状态挤断行；
+   *   - 模式与挡位（SELECT）：选项要一行排开才好点，半宽里选项会折成两排；
+   *   - 主控电源卡：页面顶部的门面，保持整行。
+   * 读数卡（同一服务的多个只读读数合并成一张）同样保持整行，横排的「标签 — 数值」才看得清。
+   *
+   * 复用 PropertyControl 的 compact 版式（标签在上、控件在下、最小高度固定），
+   * 它本来就是为网格设计的，不需要另写一套控件。
+   */
+  @Builder
+  controlTileGrid(tiles: PropertyControlDescriptor[]) {
+    Flex({
+      wrap: FlexWrap.Wrap,
+      justifyContent: FlexAlign.SpaceBetween,
+      alignItems: ItemAlign.Start
+    }) {
+      ForEach(tiles, (control: PropertyControlDescriptor) => {
+        Column() {
+          PropertyControl({
+            control: control,
+            value: this.getValue(control),
+            compact: true,
+            onChanged: (value: Object) => {
+              this.setValue(control, value);
+            }
+          })
+        }
+        .width(DUAL_COLUMN_CARD_WIDTH)
+        .margin({ bottom: 10 })
+      }, (control: PropertyControlDescriptor) => `tile_${control.siid}_${control.piid}`)
+    }
+    .width('100%')
   }
 
   // 分区读数卡：同一服务的多个只读读数合并成一张卡，读数行左右对齐

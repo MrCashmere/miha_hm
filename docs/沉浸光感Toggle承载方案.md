@@ -233,6 +233,10 @@ new uiMaterial.ImmersiveMaterial({ style: materialStyle(), applyShadow: false })
 MaterialCardLayer({ layerRadius: HwRadius.pill, layerShadow: false })
 ```
 
+`MaterialCard` 也透出了这个开关：**成排的小卡片**（选择家庭页那类上下只隔 10 点的列表卡）
+传 `cardMaterialShadow: false` 即可，材质照常渲染、只是不带投影；
+只有需要自己写承载层的地方（房间 chip、分类芯片等）才直接用 `MaterialCardLayer`。
+
 ---
 
 ## 9. 流光：按压时的光效

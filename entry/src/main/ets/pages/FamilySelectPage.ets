@@ -23,7 +23,7 @@ import { router } from '@kit.ArkUI';
 import { XiaomiHome, ALL_HOMES_ID, ALL_HOMES_NAME } from '../models/XiaomiHomeModels';
 import { xiaomiDataService } from '../services/XiaomiDataService';
 import { HwColor, HwRadius, HwSpace, reloadAppTheme, resolvePageBackground } from '../utils/DesignTokens';
-import { AccentColorSentinel } from '../components/MaterialCard';
+import { MaterialCard, AccentColorSentinel } from '../components/MaterialCard';
 import { IconCircleButton } from '../components/IconCircleButton';
 import { AppBackground } from '../components/AppBackground';
 import { AppSettingsStore } from '../storage/AppSettingsStore';
@@ -113,6 +113,87 @@ struct FamilySelectPage {
     router.back();
   }
 
+  // ==================== 家庭卡 ====================
+
+  /**
+   * 家庭卡：`home === null` 表示「全部家庭」那一项。
+   *
+   * 必须走 MaterialCard：本页此前是「Row + backgroundColor(HwColor.surface)」的实色块，
+   * 与本工程其它页面（首页设备卡、首页的选择家庭弹窗、耗材卡…）完全不是一套观感——
+   * 实色底会把沉浸光感材质挡在下面，所以整页看着「没有光感」。
+   * MaterialCard 内部用 ToggleType.Button 承载 systemMaterial，选中态改用主色描边表达。
+   */
+  @Builder
+  homeCard(home: XiaomiHome | null) {
+    MaterialCard({
+      cardDirection: FlexDirection.Row,
+      cardSpace: 10,
+      cardPadding: HwSpace.lg,
+      cardRadius: HwRadius.card,
+      // 成排的小卡片关掉材质自带投影：这几张卡上下只隔 10vp，
+      // 投影会在卡间缝隙里叠成一条暗带，看着像每张卡背后顶了一层影子
+      cardMaterialShadow: false,
+      cardBorderWidth: this.isHomeOptionSelected(home) ? 1 : 0,
+      cardBorderColor: this.isHomeOptionSelected(home) ? HwColor.primary : '#00000000',
+      cardOnClick: (): void => {
+        this.selectHomeOption(home);
+      }
+    }) {
+      Column({ space: 4 }) {
+        Text(this.homeOptionTitle(home))
+          .fontFamily(this.appFontFamily(this.homeOptionTitle(home)))
+          .fontWeight(this.appFontWeight())
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(HwColor.textPrimary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.homeOptionSubtitle(home))
+          .fontFamily(this.appFontFamily(this.homeOptionSubtitle(home)))
+          .fontWeight(this.appFontWeight())
+          .fontSize(13)
+          .fontColor(HwColor.textSecondary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      if (this.isHomeOptionSelected(home)) {
+        Text('当前')
+          .fontFamily(this.appFontFamily('当前'))
+          .fontWeight(this.appFontWeight())
+          .fontSize(12)
+          .fontColor(HwColor.primary)
+      }
+    }
+  }
+
+  /** 该项是不是当前选中的家庭（null 即「全部家庭」） */
+  private isHomeOptionSelected(home: XiaomiHome | null): boolean {
+    return home === null
+      ? this.selectedHomeId === ALL_HOMES_ID
+      : this.selectedHomeId === home.homeId;
+  }
+
+  private homeOptionTitle(home: XiaomiHome | null): string {
+    return home === null ? ALL_HOMES_NAME : home.name;
+  }
+
+  private homeOptionSubtitle(home: XiaomiHome | null): string {
+    return home === null ? '显示账号下所有家庭的所有设备' : `${home.roomList.length} 个房间`;
+  }
+
+  private selectHomeOption(home: XiaomiHome | null): void {
+    if (home === null) {
+      this.selectAllHomes();
+      return;
+    }
+    this.selectHome(home);
+  }
+
   build() {
     Stack() {
       // 主题色依赖：切色时让整页重新求值（零尺寸，不参与布局）
@@ -157,80 +238,24 @@ struct FamilySelectPage {
             .fontColor(HwColor.danger)
         }
 
+        if (!this.loading && this.errorMessage.length === 0 && this.homes.length === 0) {
+          Text('暂无家庭，请返回首页下拉刷新后重试')
+            .fontFamily(this.appFontFamily('暂无家庭，请返回首页下拉刷新后重试'))
+            .fontWeight(this.appFontWeight())
+            .fontSize(13)
+            .fontColor(HwColor.textSecondary)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .padding({ top: HwSpace.lg, bottom: HwSpace.lg })
+        }
+
         Scroll() {
           Column({ space: 10 }) {
-            Row({ space: 10 }) {
-              Column({ space: 4 }) {
-                Text(ALL_HOMES_NAME)
-                  .fontFamily(this.appFontFamily(ALL_HOMES_NAME))
-                  .fontWeight(this.appFontWeight())
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(HwColor.textPrimary)
-                Text('显示账号下所有家庭的所有设备')
-                  .fontFamily(this.appFontFamily('显示账号下所有家庭的所有设备'))
-                  .fontWeight(this.appFontWeight())
-                  .fontSize(13)
-                  .fontColor(HwColor.textSecondary)
-              }
-              .alignItems(HorizontalAlign.Start)
-              Blank()
-              if (this.selectedHomeId === ALL_HOMES_ID) {
-                Text('当前')
-                  .fontFamily(this.appFontFamily('当前'))
-                  .fontWeight(this.appFontWeight())
-                  .fontSize(12)
-                  .fontColor(HwColor.primary)
-              }
-            }
-            .width('100%')
-            .padding(HwSpace.lg)
-            .borderRadius(HwRadius.card)
-            .backgroundColor(HwColor.surface)
-            .border({
-              width: this.selectedHomeId === ALL_HOMES_ID ? 1 : 0,
-              color: this.selectedHomeId === ALL_HOMES_ID ? HwColor.primary : '#00000000'
-            })
-            .onClick(() => {
-              this.selectAllHomes();
-            })
+            // 「全部家庭」+ 各家庭：同一张 MaterialCard 版式，选中项主色描边
+            this.homeCard(null)
 
             ForEach(this.homes, (home: XiaomiHome) => {
-              Row({ space: 10 }) {
-                Column({ space: 4 }) {
-                  Text(home.name)
-                    .fontFamily(this.appFontFamily(home.name))
-                    .fontWeight(this.appFontWeight())
-                    .fontSize(17)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(HwColor.textPrimary)
-                  Text(`${home.roomList.length} 个房间`)
-                    .fontFamily(this.appFontFamily(`${home.roomList.length} 个房间`))
-                    .fontWeight(this.appFontWeight())
-                    .fontSize(13)
-                    .fontColor(HwColor.textSecondary)
-                }
-                .alignItems(HorizontalAlign.Start)
-                Blank()
-                if (this.selectedHomeId === home.homeId) {
-                  Text('当前')
-                    .fontFamily(this.appFontFamily('当前'))
-                    .fontWeight(this.appFontWeight())
-                    .fontSize(12)
-                    .fontColor(HwColor.primary)
-                }
-              }
-              .width('100%')
-              .padding(HwSpace.lg)
-              .borderRadius(HwRadius.card)
-              .backgroundColor(HwColor.surface)
-              .border({
-                width: this.selectedHomeId === home.homeId ? 1 : 0,
-                color: this.selectedHomeId === home.homeId ? HwColor.primary : '#00000000'
-              })
-              .onClick(() => {
-                this.selectHome(home);
-              })
+              this.homeCard(home)
             }, (home: XiaomiHome) => home.homeId)
           }
           .width('100%')

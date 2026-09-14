@@ -191,6 +191,17 @@ export struct MaterialCard {
   /** 该卡片是否需要承载沉浸光感。滚动列表等长列表内可主动关闭以省性能。 */
   @Prop cardMaterialEnabled: boolean = true;
   /**
+   * 材质自带的那层投影（`ImmersiveMaterial.applyShadow`，系统默认 true）是否保留。
+   *
+   * 按 docs/沉浸光感Toggle承载方案.md §8 的取舍：**大卡片保留**（投影是加分项），
+   * **成排的小卡片要关掉**——这类卡片挨得近，投影会在卡间缝隙里叠成一条暗带，
+   * 看着像「每张卡背后顶了一层影子」。关掉只是不带投影，材质本身照常渲染。
+   *
+   * 关投影走的是 SystemMaterial 里单独缓存的那一档 `applyShadow: false` 材质，
+   * 不会影响其它卡片。
+   */
+  @Prop cardMaterialShadow: boolean = true;
+  /**
    * 卡片内容的主轴方向。原卡片容器是 Row 时必须传 FlexDirection.Row，
    * 否则内容会被压成竖向排列（Column 语义会改变布局）。
    */
@@ -438,7 +449,7 @@ export struct MaterialCard {
     // 溢出光晕在最底层：卡内部分由上面的材质层盖住，只留卡片外那圈
     this.glowSpillLayer()
     if (this.materialActive()) {
-      MaterialCardLayer({ layerRadius: this.cardRadius })
+      MaterialCardLayer({ layerRadius: this.cardRadius, layerShadow: this.cardMaterialShadow })
     }
     if (this.cardTint.length > 0) {
       // 沾色层：叠在材质之上、内容之下。

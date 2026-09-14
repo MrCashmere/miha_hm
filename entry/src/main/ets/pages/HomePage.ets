@@ -37,7 +37,7 @@ import { Logger } from '../utils/Logger';
 import { deviceSymbolFor, isLightDeviceText } from '../utils/DeviceSymbol';
 import { DataSourceState } from '../models/CacheState';
 import { XiaomiAuthError } from '../models/XiaomiErrors';
-import { HwColor, HwGlassCardColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
+import { DUAL_COLUMN_CARD_WIDTH, HwColor, HwGlassCardColor, HwRadius, HwSpace, onAccentColor, reloadAppTheme, resolvePageBackground, withAlpha } from '../utils/DesignTokens';
 import { applyMaterialCarrier, pressLightColor, sheetSystemMaterial, sheetBlurStyle } from '../utils/SystemMaterial';
 import { isCelsiusUnit, celsiusToFahrenheit } from '../utils/TemperatureDisplay';
 import { MaterialCard, MaterialCardLayer, MaterialSheetPanel, AccentColorSentinel } from '../components/MaterialCard';
@@ -235,6 +235,13 @@ struct HomePage {
   @State accountAvatarUrl: string = '';
   @StorageLink('hideOfflineDevices') @Watch('onHideOfflineDevicesChanged') hideOfflineDevices: boolean = false;
   @StorageLink('dualColumnMode') dualColumnMode: boolean = false;
+  /**
+   * 游客态：登录页「跳过登录」进入时为 true（只存在于本次会话，见 EntryAbility）。
+   *
+   * 此时没有账号，「我的」显示「未登录用户」、按钮变成「登录」，并且所有云端拉取
+   * 直接跳过——否则无账号时小米接口会抛鉴权错误，把用户又弹回登录页。
+   */
+  @StorageLink('guestMode') guestMode: boolean = false;
   @StorageLink('autoMultiColumn') autoMultiColumn: boolean = false;
   @StorageProp('isLargeScreen') isLargeScreen: boolean = false;
   @StorageProp('is2in1') is2in1: boolean = false;
@@ -368,7 +375,7 @@ struct HomePage {
     this.loadData(true);
     this.loadAccount();
     this.consumePendingDeviceDetail();
-    if (this.defaultHomeTab === 'info' && !this.isWearable) {
+    if (this.defaultHomeTab === 'info' && !this.isWearable && !this.guestMode) {
       this.activeTab = 1;
       this.refreshInfoOnEnter();
       this.startInfoRefreshTimer();
@@ -427,6 +434,18 @@ struct HomePage {
   }
 
   async loadData(forceRefresh: boolean, silent: boolean = false): Promise<void> {
+    // 游客态（跳过登录）：没有账号可拉，直接收尾。
+    // 这里必须提前返回而不是让它去请求：无账号时云端会抛 XiaomiAuthError，
+    // 下面的 catch 会把人弹回登录页，「跳过登录」就白点了。
+    if (this.guestMode) {
+      this.loading = false;
+      this.errorMessage = '';
+      this.statusMessage = '未登录，登录后可同步米家设备';
+      this.devices = [];
+      this.allVisibleDevices = [];
+      this.updateFilteredDevices();
+      return;
+    }
     if (!silent) {
       this.loading = true;
     }
@@ -503,7 +522,10 @@ struct HomePage {
       Logger.error('load home data failed, %{public}s', this.errorMessage);
       if (err instanceof XiaomiAuthError) {
         await xiaomiDataService.clearSession();
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/LoginPage' });
+        // 游客态本来就没有账号，不能因为「没有鉴权信息」再把人弹回登录页
+        if (!this.guestMode) {
+          this.getUIContext().getRouter().replaceUrl({ url: 'pages/LoginPage' });
+        }
       }
     } finally {
       if (!silent) {
@@ -539,6 +561,69 @@ struct HomePage {
     }
   }
 
+  /**
+   * 切换家庭：跳到「选择家庭」页（`pages/FamilySelectPage`）。
+   *
+   * 该页选完会写 selectedHomeId / selectedHomeName 并把 homeSelectionVersion +1，
+   * 然后 router.back()；首页订阅了 homeSelectionVersion（onHomeSelectionChanged），
+   * 收到通知会自动重新拉数据，所以这里 push 出去即可，不需要再回传结果。
+   */
+  private openFamilySelectPage(): void {
+    // 游客态没有账号，家庭列表一定拉不到：先在入口说清楚，
+    // 免得跳过去只看到一句「not authenticated」
+    if (this.guestMode) {
+      this.getUIContext().getPromptAction().showToast({ message: '未登录，登录后可切换家庭' });
+      return;
+    }
+    try {
+      FeedbackLogService.recordOperation('UI', '打开选择家庭页');
+      this.getUIContext().getRouter().pushUrl({ url: 'pages/FamilySelectPage' });
+    } catch (err) {
+      Logger.error('open family select page failed, %{public}s',
+        err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** 「我的」账号行的标题：游客态显示「未登录用户」，不再谎称已登录 */
+  private accountTitle(): string {
+    if (this.accountNickname.length > 0) {
+      return this.accountNickname;
+    }
+    return this.guestMode ? '未登录用户' : '已登录用户';
+  }
+
+  /** 「我的」账号行的副标题：游客态没有 uid，给一句「登录有什么好处」而不是「未获取到账号」 */
+  private accountSubtitle(): string {
+    if (this.accountUserId.length > 0) {
+      return this.accountUserId;
+    }
+    return this.guestMode ? '登录后可同步米家设备' : '未获取到账号';
+  }
+
+  /** 账号行动作文案：已登录是「退出登录」，游客态是「登录」 */
+  private accountActionLabel(): string {
+    return this.guestMode ? '登录' : '退出登录';
+  }
+
+  private accountActionColor(): string {
+    return this.guestMode ? this.accentOrPrimary() : HwColor.danger;
+  }
+
+  /** 账号行点击：游客态回登录页，已登录走退出确认 */
+  private onAccountAction(): void {
+    if (this.guestMode) {
+      this.openLoginPage();
+      return;
+    }
+    this.showLogoutDialog();
+  }
+
+  /** 游客态点「登录」：回登录页继续扫码，游客标记由登录成功后清除 */
+  private openLoginPage(): void {
+    FeedbackLogService.recordOperation('UI', '未登录用户点击登录');
+    this.getUIContext().getRouter().replaceUrl({ url: 'pages/LoginPage' });
+  }
+
   showLogoutDialog(): void {
     this.getUIContext().showAlertDialog({
       title: '退出登录',
@@ -566,6 +651,13 @@ struct HomePage {
 
   async loadInfoData(silent: boolean = false): Promise<void> {
     if (this.infoFetching) {
+      return;
+    }
+    // 游客态：没有账号可查，收起加载态并给出说明。
+    // 这里同样不能让它去请求，否则 XiaomiAuthError 会把人弹回登录页。
+    if (this.guestMode) {
+      this.infoLoading = false;
+      this.infoError = '未登录，登录后可查看设备信息统计';
       return;
     }
     this.infoFetching = true;
@@ -697,7 +789,9 @@ struct HomePage {
         err instanceof Error ? err.message : String(err));
       if (err instanceof XiaomiAuthError) {
         await xiaomiDataService.clearSession();
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/LoginPage' });
+        if (!this.guestMode) {
+          this.getUIContext().getRouter().replaceUrl({ url: 'pages/LoginPage' });
+        }
       }
     } finally {
       this.infoFetching = false;
@@ -1918,6 +2012,11 @@ struct HomePage {
     if (this.messageLoading) {
       return;
     }
+    // 游客态没有账号，消息接口必然失败；静默留空即可
+    if (this.guestMode) {
+      this.cloudMessages = [];
+      return;
+    }
     if (this.selectedHomeId.length === 0 || this.selectedHomeId === ALL_HOMES_ID) {
       // 未选家庭 / 全部家庭时不查询：消息接口必须带具体 homeId
       this.cloudMessages = [];
@@ -2137,8 +2236,17 @@ struct HomePage {
       .layoutWeight(1)
 
       if (this.activeTab === 0) {
-        // 家庭切换按钮已移除：选家庭改在「全部家庭」入口与设置里完成，
-        // 顶栏只保留回正 + 刷新两个按钮，避免三个圆形按钮挤在一起。
+        // 首页顶栏三个圆形按钮：切换家庭 + 列表回正 + 刷新。
+        // 家庭切换此前以「避免三个圆钮挤在一起」为由移除过，现按需求加回；
+        // 手机（非宽屏）看不到这段自绘顶栏，那边走系统标题栏的 menu，动作是同一个。
+        IconCircleButton({
+          symbol: $r('sys.symbol.arrow_left_arrow_right'),
+          buttonSize: 36,
+          iconSize: 18,
+          onAction: (): void => {
+            this.openFamilySelectPage();
+          }
+        })
         IconCircleButton({
           symbol: $r('sys.symbol.rectangle_split_2x1'),
           buttonSize: 36,
@@ -2348,6 +2456,26 @@ struct HomePage {
     })
   }
 
+  /**
+   * 卡片点击的公共处理：快捷开关吃掉的那次点击不进详情页。
+   *
+   * 快捷开关叠在卡片上，它的 onClick 与卡片的 onClick 都会触发；点开关时
+   * 打上 quickSwitchTapHandled 标记，卡片这一侧看到标记就只清标记、不跳页。
+   * 路由器要先进风险提示（本软件不支持控制路由器，但允许手动改参数）。
+   */
+  private handleDeviceCardTap(device: XiaomiDevice): void {
+    if (this.quickSwitchTapHandled) {
+      this.quickSwitchTapHandled = false;
+      return;
+    }
+    FeedbackLogService.recordOperation('UI', `点击设备 ${this.homeDisplayName(device)} (${device.did})`);
+    if (this.isRouterDevice(device)) {
+      this.showRouterWarningDialog(device.did);
+    } else {
+      this.pageInfos.pushPathByName('deviceDetail', new DeviceDetailRouteParam(device.did));
+    }
+  }
+
   @Builder
   deviceCard(device: XiaomiDevice) {
     MaterialCard({
@@ -2361,17 +2489,7 @@ struct HomePage {
         this.openDeviceActionSheet(device);
       },
       cardOnClick: () => {
-        if (this.quickSwitchTapHandled) {
-          // 点的是快捷开关，不再进详情页
-          this.quickSwitchTapHandled = false;
-          return;
-        }
-        FeedbackLogService.recordOperation('UI', `点击设备 ${this.homeDisplayName(device)} (${device.did})`);
-        if (this.isRouterDevice(device)) {
-          this.showRouterWarningDialog(device.did);
-        } else {
-          this.pageInfos.pushPathByName('deviceDetail', new DeviceDetailRouteParam(device.did));
-        }
+        this.handleDeviceCardTap(device);
       }
     }) {
       Row({ space: HwSpace.sm }) {
@@ -2443,6 +2561,138 @@ struct HomePage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /**
+   * 双列模式的设备网格（设置 → 双列模式）。
+   *
+   * 用 `Flex(wrap)` 而不是 `Grid`：Grid 需要给定行高，卡片会被强行拉成等高，
+   * 名称长短不一的设备会留出大片空白；`Flex` 让每张卡按内容自适应。
+   * 宽度是写死的 48.5%（见 DUAL_COLUMN_CARD_WIDTH），所以最后一张落单的卡
+   * 只会占半宽，不会被拉伸成一整行。
+   */
+  @Builder
+  deviceGrid() {
+    Flex({
+      wrap: FlexWrap.Wrap,
+      justifyContent: FlexAlign.SpaceBetween,
+      alignItems: ItemAlign.Start
+    }) {
+      // key 同整行卡：带上置顶态与主题色，避免 ForEach 复用旧组件导致图标 / 开关停在旧色
+      ForEach(this.filteredDevices, (device: XiaomiDevice) => {
+        Column() {
+          this.deviceTileCard(device)
+        }
+        .width(DUAL_COLUMN_CARD_WIDTH)
+        .margin({ bottom: 10 })
+      }, (device: XiaomiDevice) =>
+      `${device.did}_${this.favoriteDevices.indexOf(device.did) >= 0 ? 1 : 0}_${this.accentColor}`)
+    }
+    .width('100%')
+  }
+
+  /**
+   * 双列模式下的设备卡：竖向版式 —— 图标在左上角、快捷开关在右下角。
+   *
+   * 整行卡是「图标 + 名称 + 开关」横排，压到半宽后名称、位置与开关会挤成一团，
+   * 所以双列另起一套版式：图标独占顶部一行，名称与在线状态在中间，
+   * 开关单独占底部一行并靠右。
+   *
+   * 底部那一行**恒占高**（开关不存在时留空）：同一行里有的设备有电源属性、
+   * 有的没有，行高不固定的话两张卡会一高一矮，网格看起来是歪的。
+   */
+  @Builder
+  deviceTileCard(device: XiaomiDevice) {
+    MaterialCard({
+      cardSpace: HwSpace.sm,
+      cardRadius: this.isWearable ? 16 : HwRadius.card,
+      cardPadding: this.cardPadding(),
+      cardHoverEffect: HoverEffect.Highlight,
+      cardFocusable: true,
+      cardOnLongPress: (): void => {
+        this.openDeviceActionSheet(device);
+      },
+      cardOnClick: () => {
+        this.handleDeviceCardTap(device);
+      }
+    }) {
+      Column({ space: HwSpace.sm }) {
+        Row() {
+          // 图标同上：透明底直接放系统符号，不垫圆角色块
+          SymbolGlyph(this.deviceSymbol(device))
+            .fontSize(this.isWearable ? 30 : 34)
+            .fontColor([this.accent()])
+            .width(this.isWearable ? 32 : 38)
+            .height(this.isWearable ? 32 : 38)
+
+          Blank()
+
+          if (this.isFavoriteDevice(device.did)) {
+            IconCircleButton({
+              symbol: $r('sys.symbol.star_fill'),
+              buttonSize: 30,
+              iconSize: 15,
+              tint: '#F0A020',
+              onAction: (): void => {
+                this.toggleDeviceFavorite(device.did);
+              }
+            })
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        // 名称与状态：置顶星标不再重复画在名字前（右上角已有一颗可点的星），
+        // 半宽卡里省下的横向空间留给名称本身
+        Column({ space: 2 }) {
+          Text(this.homeDisplayName(device))
+            .fontFamily(this.appFontFamily(this.homeDisplayName(device)))
+            .fontWeight(this.appFontWeight())
+            .fontSize(this.isWearable ? 13 : 15)
+            .fontColor(HwColor.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+
+          Row({ space: HwSpace.xs }) {
+            Column()
+              .width(6)
+              .height(6)
+              .borderRadius(3)
+              .backgroundColor(device.online ? HwColor.online : '#B8BEC7')
+            Text(this.deviceLocation(device).length > 0
+              ? this.deviceLocation(device)
+              : (device.online ? '在线' : '离线'))
+              .fontFamily(this.appFontFamily(device.online ? '在线' : '离线'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(this.isWearable ? 11 : 12)
+              .fontColor(device.online ? HwColor.online : HwColor.textSecondary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        // 开关行：Blank 把开关顶到最右，形成「右下角」的落点；
+        // 没有快捷开关的设备同样保留这一行高度，保证同行卡片等高
+        Row() {
+          Blank()
+          // quickPowerVersion 作为渲染依赖：属性后台解析完成后这里会重新求值
+          if (this.quickPowerVersion >= 0 && this.hasQuickSwitch(device)) {
+            this.deviceQuickSwitch(device)
+          }
+        }
+        .width('100%')
+        .height(34)
+        .alignItems(VerticalAlign.Center)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
     }
   }
 
@@ -2641,44 +2891,103 @@ struct HomePage {
   private deviceSymbol(device: XiaomiDevice): Resource {
     return deviceSymbolFor(device.model, device.name);
   }
-  /** 骨架屏：用真卡片形状的占位块顶住首屏高度，加载完切真列表不会跳版 */
+  /**
+   * 骨架屏：用真卡片形状的占位块顶住首屏高度，加载完切真列表不会跳版。
+   *
+   * 双列模式下列数必须跟着变：骨架是单列、真列表变两列的话，加载完照样跳一次版，
+   * 骨架屏就白做了。
+   */
   @Builder
   deviceGridSkeleton() {
-    Column({ space: 10 }) {
-      ForEach(this.skeletonPlaceholders, (item: number) => {
-        MaterialCard({
-          cardRadius: this.isWearable ? 16 : HwRadius.card,
-          cardPadding: this.cardPadding(),
-          cardMaterialEnabled: false,
-          cardOpacity: 0.5
-        }) {
-          Row({ space: HwSpace.sm }) {
-            Column()
-              .width(this.isWearable ? 32 : 38)
-              .height(this.isWearable ? 32 : 38)
-              .borderRadius(HwRadius.control)
-              .backgroundColor('#C3CEDC')
-            Column({ space: HwSpace.sm }) {
-              Column()
-                .width('60%')
-                .height(14)
-                .borderRadius(4)
-                .backgroundColor('#C3CEDC')
-              Column()
-                .width('38%')
-                .height(12)
-                .borderRadius(4)
-                .backgroundColor('#D3DCE7')
-            }
-            .alignItems(HorizontalAlign.Start)
-            .layoutWeight(1)
+    if (this.dualColumnMode && !this.isWearable) {
+      Flex({
+        wrap: FlexWrap.Wrap,
+        justifyContent: FlexAlign.SpaceBetween,
+        alignItems: ItemAlign.Start
+      }) {
+        ForEach(this.skeletonPlaceholders, (item: number) => {
+          Column() {
+            this.deviceSkeletonTile()
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-        }
-      }, (item: number) => `home_skeleton_${item}`)
+          .width(DUAL_COLUMN_CARD_WIDTH)
+          .margin({ bottom: 10 })
+        }, (item: number) => `home_skeleton_tile_${item}`)
+      }
+      .width('100%')
+    } else {
+      Column({ space: 10 }) {
+        ForEach(this.skeletonPlaceholders, (item: number) => {
+          this.deviceSkeletonRow()
+        }, (item: number) => `home_skeleton_row_${item}`)
+      }
+      .width('100%')
     }
-    .width('100%')
+  }
+
+  /** 整行卡的骨架：一块图标方块 + 右侧两行文字条 */
+  @Builder
+  deviceSkeletonRow() {
+    MaterialCard({
+      cardRadius: this.isWearable ? 16 : HwRadius.card,
+      cardPadding: this.cardPadding(),
+      cardMaterialEnabled: false,
+      cardOpacity: 0.5
+    }) {
+      Row({ space: HwSpace.sm }) {
+        Column()
+          .width(this.isWearable ? 32 : 38)
+          .height(this.isWearable ? 32 : 38)
+          .borderRadius(HwRadius.control)
+          .backgroundColor('#C3CEDC')
+        Column({ space: HwSpace.sm }) {
+          Column()
+            .width('60%')
+            .height(14)
+            .borderRadius(4)
+            .backgroundColor('#C3CEDC')
+          Column()
+            .width('38%')
+            .height(12)
+            .borderRadius(4)
+            .backgroundColor('#D3DCE7')
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  /** 双列卡的骨架：方块在左上、文字条在下方，形状与双列真卡一致 */
+  @Builder
+  deviceSkeletonTile() {
+    MaterialCard({
+      cardRadius: this.isWearable ? 16 : HwRadius.card,
+      cardPadding: this.cardPadding(),
+      cardMaterialEnabled: false,
+      cardOpacity: 0.5
+    }) {
+      Column({ space: HwSpace.sm }) {
+        Column()
+          .width(this.isWearable ? 32 : 38)
+          .height(this.isWearable ? 32 : 38)
+          .borderRadius(HwRadius.control)
+          .backgroundColor('#C3CEDC')
+        Column()
+          .width('72%')
+          .height(14)
+          .borderRadius(4)
+          .backgroundColor('#C3CEDC')
+        Column()
+          .width('46%')
+          .height(12)
+          .borderRadius(4)
+          .backgroundColor('#D3DCE7')
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
   }
 
   /** 一键关灯入口：放在首页而不是智能页，关灯是最高频的全屋批量操作 */
@@ -2792,8 +3101,10 @@ struct HomePage {
               .height(48)
               .margin({ top: 40 })
           } else if (this.cloudMessages.length === 0) {
-            Text('暂无家庭消息')
-              .fontFamily(this.appFontFamily('暂无家庭消息'))
+            // 游客态要说清「为什么没有」：消息来自云端，未登录时拉不到，
+            // 直接显示「暂无家庭消息」会让人以为账号里真的没有消息
+            Text(this.guestMode ? '未登录，登录后可查看家庭消息' : '暂无家庭消息')
+              .fontFamily(this.appFontFamily(this.guestMode ? '未登录，登录后可查看家庭消息' : '暂无家庭消息'))
               .fontWeight(this.appFontWeight())
               .fontSize(14)
               .fontColor(HwColor.textSecondary)
@@ -2945,17 +3256,21 @@ struct HomePage {
         this.homeEmptyHint()
       }
 
-      // 设备列表固定单排：分栏模式会让卡片变窄、文字被截断，按体验取舍只保留单排。
-      // （设置里的分栏开关已一并移除，避免留下无效开关。）
-      Column({ space: 10 }) {
-        // key 里必须带上 accentColor：ForEach 复用同 key 的项，键不变就不会重建卡片，
-        // 卡内写死的 HwColor.primary（图标、快捷开关）在切主题色后会停在旧色。
-        ForEach(this.filteredDevices, (device: XiaomiDevice) => {
-          this.deviceCard(device)
-        }, (device: XiaomiDevice) =>
-        `${device.did}_${this.favoriteDevices.indexOf(device.did) >= 0 ? 1 : 0}_${this.accentColor}`)
+      // 设备列表：默认整行单排；设置里打开「双列模式」后换成两列网格卡。
+      // 穿戴设备屏幕太窄，半宽卡放不下名称与开关，强制保持单排。
+      if (this.dualColumnMode && !this.isWearable) {
+        this.deviceGrid()
+      } else {
+        Column({ space: 10 }) {
+          // key 里必须带上 accentColor：ForEach 复用同 key 的项，键不变就不会重建卡片，
+          // 卡内写死的 HwColor.primary（图标、快捷开关）在切主题色后会停在旧色。
+          ForEach(this.filteredDevices, (device: XiaomiDevice) => {
+            this.deviceCard(device)
+          }, (device: XiaomiDevice) =>
+          `${device.did}_${this.favoriteDevices.indexOf(device.did) >= 0 ? 1 : 0}_${this.accentColor}`)
+        }
+        .width('100%')
       }
-      .width('100%')
 
       Blank()
         .height(this.isWideScreen ? 24 : BOTTOM_BAR_HEIGHT + BOTTOM_BAR_MARGIN + this.navigationBarHeight + 24)
@@ -3056,16 +3371,16 @@ struct HomePage {
             .backgroundColor('#E8EAED')
           }
           Column({ space: 4 }) {
-            Text(this.accountNickname || '已登录用户')
-              .fontFamily(this.appFontFamily(this.accountNickname || '已登录用户'))
+            Text(this.accountTitle())
+              .fontFamily(this.appFontFamily(this.accountTitle()))
               .fontWeight(this.appFontWeight())
               .fontSize(17)
               .fontWeight(FontWeight.Medium)
               .fontColor(HwColor.textPrimary)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(this.accountUserId || '未获取到账号')
-              .fontFamily(this.appFontFamily(this.accountUserId || '未获取到账号'))
+            Text(this.accountSubtitle())
+              .fontFamily(this.appFontFamily(this.accountSubtitle()))
               .fontWeight(this.appFontWeight())
               .fontSize(13)
               .fontColor(HwColor.textSecondary)
@@ -3082,15 +3397,22 @@ struct HomePage {
           .color('#14000000')
           .margin({ top: HwSpace.md, bottom: HwSpace.md })
 
+        // 游客态这一行是「登录」（把人送回登录页），已登录才是「退出登录」（红字 + 二次确认）
         Row({ space: 10 }) {
-          SymbolGlyph($r('sys.symbol.arrow_right_to_line'))
-            .fontSize(18)
-            .fontColor([HwColor.danger])
-          Text('退出登录')
-            .fontFamily(this.appFontFamily('退出登录'))
+          if (this.guestMode) {
+            SymbolGlyph($r('sys.symbol.person_crop_circle_fill'))
+              .fontSize(18)
+              .fontColor([this.accountActionColor()])
+          } else {
+            SymbolGlyph($r('sys.symbol.arrow_right_to_line'))
+              .fontSize(18)
+              .fontColor([HwColor.danger])
+          }
+          Text(this.accountActionLabel())
+            .fontFamily(this.appFontFamily(this.accountActionLabel()))
             .fontWeight(this.appFontWeight())
             .fontSize(15)
-            .fontColor(HwColor.danger)
+            .fontColor(this.accountActionColor())
             .layoutWeight(1)
           SymbolGlyph($r('sys.symbol.chevron_right'))
             .fontSize(16)
@@ -3099,7 +3421,7 @@ struct HomePage {
         .width('100%')
         .hoverEffect(HoverEffect.Highlight)
         .onClick(() => {
-          this.showLogoutDialog();
+          this.onAccountAction();
         })
       }
 
@@ -4537,6 +4859,17 @@ struct HomePage {
         scrollEffectOpts: {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        /**
+         * 标题栏沉浸光感（HDS 官方入口，6.1.0(23)+），与底部悬浮页签用同一套系统材质。
+         *
+         * 标题栏右上角那两个圆形按钮是**系统按这套样式绘制**的菜单项：菜单项本身只接受
+         * icon / label / action，挂不了自定义材质，所以「按钮适配沉浸光感」只能在这里下发。
+         * 宽屏走自绘顶栏（tabHeader），那里的按钮是 IconCircleButton，本身就带材质。
+         */
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         }
       },
       content: {
@@ -4546,9 +4879,18 @@ struct HomePage {
             ? this.selectedHomeName
             : undefined
         },
-        // 菜单只保留「刷新」：选择家庭与排除设备入口已从顶栏移除
+        // 首页顶栏两个按钮：切换家庭 + 刷新（与宽屏自绘顶栏 tabHeader 的动作保持一致）
         menu: this.activeTab === 0 ? {
           value: [
+            {
+              content: {
+                label: '切换家庭',
+                icon: $r('sys.symbol.arrow_left_arrow_right'),
+                action: () => {
+                  this.openFamilySelectPage();
+                }
+              }
+            },
             {
               content: {
                 label: '刷新',

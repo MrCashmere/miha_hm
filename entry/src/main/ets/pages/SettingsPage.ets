@@ -90,6 +90,8 @@ struct SettingsPage {
   @State isWideScreen: boolean = false;
   @StorageLink('hideOfflineDevices') hideOfflineDevices: boolean = false;
   @StorageLink('dualColumnMode') dualColumnMode: boolean = false;
+  /** 设备详情页控制卡双列：与首页「双列模式」分开的一份设置，默认关闭 */
+  @StorageLink('devicePageDualColumn') devicePageDualColumn: boolean = false;
   @StorageLink('autoMultiColumn') autoMultiColumn: boolean = false;
   @StorageLink('homeSmoothSwitch') homeSmoothSwitch: boolean = false;
   @StorageLink('temperatureFahrenheit') temperatureFahrenheit: boolean = false;
@@ -127,6 +129,7 @@ struct SettingsPage {
     this.onBreakpointChange();
     FeedbackLogService.recordOperation('PAGE',
       `设置项: 隐藏离线=${this.hideOfflineDevices} 分栏=${this.dualColumnMode} 自动多栏=${this.autoMultiColumn} ` +
+      `设备页双列=${this.devicePageDualColumn} ` +
       `平滑切换=${this.homeSmoothSwitch} 华氏温度=${this.temperatureFahrenheit} 显示单位=${this.temperatureShowUnit} ` +
       `显示更多内容=${this.infoShowMoreContent} 按房间排序=${this.sortDevicesByRoom} 默认标签=${this.defaultHomeTab} ` +
       `刷新间隔=${this.infoRefreshInterval} 排除设备数=${this.infoExcludedDevices.length}`);
@@ -142,6 +145,7 @@ struct SettingsPage {
     AppSettingsStore.delete('selectedHomeId');
     AppSettingsStore.delete('selectedHomeName');
     AppSettingsStore.delete('dualColumnMode');
+    AppSettingsStore.delete('devicePageDualColumn');
     AppSettingsStore.delete('autoMultiColumn');
     AppSettingsStore.delete('temperatureFahrenheit');
     AppSettingsStore.delete('temperatureShowUnit');
@@ -175,6 +179,7 @@ struct SettingsPage {
     AppStorage.setOrCreate('selectedHomeId', '');
     AppStorage.setOrCreate('selectedHomeName', '');
     AppStorage.setOrCreate('dualColumnMode', false);
+    AppStorage.setOrCreate('devicePageDualColumn', false);
     AppStorage.setOrCreate('autoMultiColumn', false);
     AppStorage.setOrCreate('temperatureFahrenheit', false);
     AppStorage.setOrCreate('temperatureShowUnit', false);
@@ -206,6 +211,7 @@ struct SettingsPage {
     AppStorage.setOrCreate('isDarkMode', false);
     this.hideOfflineDevices = false;
     this.dualColumnMode = false;
+    this.devicePageDualColumn = false;
     this.autoMultiColumn = false;
     this.temperatureFahrenheit = false;
     this.temperatureShowUnit = false;
@@ -644,6 +650,36 @@ struct SettingsPage {
             .onChange((isOn: boolean) => {
               this.dualColumnMode = isOn;
               AppSettingsStore.setBoolean('dualColumnMode', isOn);
+            })
+        }
+
+        // 设备页双列：与上面的「双列模式」各自独立，默认关闭。
+        // 标题里直接写明「不实用」：设备页的卡片本来就窄，压到半宽后标签与数值容易截断。
+        MaterialCard({
+          cardDirection: FlexDirection.Row,
+          cardSpace: 12,
+          cardPadding: HwSpace.lg,
+          cardRadius: HwRadius.card
+        }) {
+          Column({ space: 4 }) {
+            Text('设备页双列（不实用）')
+              .fontFamily(this.appFontFamily('设备页双列（不实用）'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(15)
+              .fontColor(HwColor.textPrimary)
+            Text('开启后设备页的控制卡按双列排列；卡片变窄后标签与数值容易截断，不建议开启')
+              .fontFamily(this.appFontFamily('开启后设备页的控制卡按双列排列；卡片变窄后标签与数值容易截断，不建议开启'))
+              .fontWeight(this.appFontWeight())
+              .fontSize(12)
+              .fontColor(HwColor.textSecondary)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.devicePageDualColumn })
+            .selectedColor(this.accentOrPrimary())
+            .onChange((isOn: boolean) => {
+              this.devicePageDualColumn = isOn;
+              AppSettingsStore.setBoolean('devicePageDualColumn', isOn);
             })
         }
 
